@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "../i18n/I18nProvider";
 import type { EditorAppId, InstalledEditorApp } from "../types/app";
 
 type EditorMultiSelectProps = {
@@ -15,6 +16,7 @@ export function EditorMultiSelect({
   disabled = false,
   onChange,
 }: EditorMultiSelectProps) {
+  const { copy } = useI18n();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -101,11 +103,11 @@ export function EditorMultiSelect({
         }}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="选择需要重启的编辑器"
+        aria-label={copy.editorPicker.ariaLabel}
       >
         <div className="editorPickerValue">
           <span className={selected ? "editorPickerLabel" : "editorPickerPlaceholder"}>
-            {selected?.label ?? "请选择编辑器"}
+            {selected?.label ?? copy.editorPicker.placeholder}
           </span>
         </div>
         <svg className="editorChevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">

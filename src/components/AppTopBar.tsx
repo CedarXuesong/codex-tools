@@ -1,5 +1,6 @@
 import type { MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useI18n } from "../i18n/I18nProvider";
 
 type AppTopBarProps = {
   onOpenSettings: () => void;
@@ -49,6 +50,20 @@ function SettingsIcon() {
   );
 }
 
+function LanguageIcon() {
+  return (
+    <svg className="iconGlyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3 5h12" />
+      <path d="M9 3v2" />
+      <path d="M7 13h4" />
+      <path d="m6 5 3 8 3-8" />
+      <path d="M15 19h6" />
+      <path d="M18 13v6" />
+      <path d="m15 16 3-3 3 3" />
+    </svg>
+  );
+}
+
 export function AppTopBar({
   onOpenSettings,
   onCheckUpdate,
@@ -57,8 +72,13 @@ export function AppTopBar({
   onRefresh,
   refreshing,
 }: AppTopBarProps) {
+  const { locale, localeOptions, copy, toggleLocale } = useI18n();
   const checking = checkingUpdate || installingUpdate;
   const appWindow = getCurrentWindow();
+  const currentLocale = localeOptions.find((item) => item.code === locale) ?? localeOptions[0];
+  const nextLocale =
+    localeOptions[(localeOptions.findIndex((item) => item.code === currentLocale.code) + 1) % localeOptions.length];
+  const toggleLanguageTitle = copy.topBar.toggleLanguage(nextLocale.nativeLabel);
 
   const handleDragMouseDown = (event: MouseEvent<HTMLElement>) => {
     if (event.button !== 0) {
@@ -79,8 +99,8 @@ export function AppTopBar({
     <header className="topbar" onMouseDown={handleDragMouseDown}>
       <div className="topDragRegion" data-tauri-drag-region>
         <div className="brandLine">
-          <img className="appLogo" src="/codex-tools.png" alt="Codex Tools logo" />
-          <h1>Codex Tools</h1>
+          <img className="appLogo" src="/codex-tools.png" alt={copy.topBar.logoAlt} />
+          <h1>{copy.topBar.appTitle}</h1>
         </div>
       </div>
       <div className="topActions">
@@ -88,8 +108,8 @@ export function AppTopBar({
           className="iconButton ghost"
           onClick={onCheckUpdate}
           disabled={checking}
-          title={checking ? "检查更新中..." : "检查更新"}
-          aria-label={checking ? "检查更新中" : "检查更新"}
+          title={checking ? copy.topBar.checkingUpdate : copy.topBar.checkUpdate}
+          aria-label={checking ? copy.topBar.checkingUpdate : copy.topBar.checkUpdate}
         >
           <UpdateIcon spinning={checking} />
         </button>
@@ -97,18 +117,27 @@ export function AppTopBar({
           className="iconButton primary"
           onClick={onRefresh}
           disabled={refreshing}
-          title={refreshing ? "刷新中..." : "手动刷新"}
-          aria-label={refreshing ? "刷新中" : "手动刷新"}
+          title={refreshing ? copy.topBar.refreshing : copy.topBar.manualRefresh}
+          aria-label={refreshing ? copy.topBar.refreshing : copy.topBar.manualRefresh}
         >
           <RefreshIcon spinning={refreshing} />
         </button>
         <button
           className="iconButton ghost"
           onClick={onOpenSettings}
-          title="打开设置"
-          aria-label="打开设置"
+          title={copy.topBar.openSettings}
+          aria-label={copy.topBar.openSettings}
         >
           <SettingsIcon />
+        </button>
+        <button
+          className="iconButton ghost languageButton"
+          onClick={toggleLocale}
+          title={toggleLanguageTitle}
+          aria-label={toggleLanguageTitle}
+        >
+          <LanguageIcon />
+          <span className="languageButtonCode">{currentLocale.shortLabel}</span>
         </button>
       </div>
     </header>

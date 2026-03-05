@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useI18n } from "../i18n/I18nProvider";
 import { EditorMultiSelect } from "./EditorMultiSelect";
 import { ThemeSwitch } from "./ThemeSwitch";
 import { SwitchField } from "./SwitchField";
@@ -31,6 +32,8 @@ export function SettingsPanel({
   savingSettings,
   onUpdateSettings,
 }: SettingsPanelProps) {
+  const { copy } = useI18n();
+
   useEffect(() => {
     if (!open) {
       return;
@@ -57,15 +60,20 @@ export function SettingsPanel({
         className="settingsDialog"
         role="dialog"
         aria-modal="true"
-        aria-label="应用设置"
+        aria-label={copy.settings.dialogAriaLabel}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="settingsHeader">
           <div>
-            <h2>设置</h2>
-            <p>可配置开机启动、状态栏显示模式和主题。</p>
+            <h2>{copy.settings.title}</h2>
+            <p>{copy.settings.subtitle}</p>
           </div>
-          <button className="iconButton ghost" onClick={onClose} aria-label="关闭设置" title="关闭">
+          <button
+            className="iconButton ghost"
+            onClick={onClose}
+            aria-label={copy.settings.close}
+            title={copy.common.close}
+          >
             <svg className="iconGlyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="m6 6 12 12" />
               <path d="M18 6 6 18" />
@@ -76,30 +84,30 @@ export function SettingsPanel({
         <SwitchField
           checked={settings.launchAtStartup}
           onChange={(checked) => onUpdateSettings({ launchAtStartup: checked })}
-          label="开机启动"
-          description="启用后会在系统登录时自动启动 Codex Tools。"
-          checkedText="开启"
-          uncheckedText="关闭"
+          label={copy.settings.launchAtStartup.label}
+          description={copy.settings.launchAtStartup.description}
+          checkedText={copy.settings.launchAtStartup.checkedText}
+          uncheckedText={copy.settings.launchAtStartup.uncheckedText}
           disabled={savingSettings}
         />
 
         <SwitchField
           checked={settings.launchCodexAfterSwitch}
           onChange={(checked) => onUpdateSettings({ launchCodexAfterSwitch: checked })}
-          label="切换后启动 Codex"
-          description="默认开启。关闭时仅切换账号，不自动拉起 Codex。"
-          checkedText="启动"
-          uncheckedText="仅切换"
+          label={copy.settings.launchCodexAfterSwitch.label}
+          description={copy.settings.launchCodexAfterSwitch.description}
+          checkedText={copy.settings.launchCodexAfterSwitch.checkedText}
+          uncheckedText={copy.settings.launchCodexAfterSwitch.uncheckedText}
           disabled={savingSettings}
         />
 
         <SwitchField
           checked={settings.syncOpencodeOpenaiAuth}
           onChange={(checked) => onUpdateSettings({ syncOpencodeOpenaiAuth: checked })}
-          label="同步 Opencode OpenAI"
-          description="切换账号时自动探测 opencode 认证文件，并同步 refresh/access。"
-          checkedText="同步"
-          uncheckedText="不同步"
+          label={copy.settings.syncOpencode.label}
+          description={copy.settings.syncOpencode.description}
+          checkedText={copy.settings.syncOpencode.checkedText}
+          uncheckedText={copy.settings.syncOpencode.uncheckedText}
           disabled={savingSettings}
         />
 
@@ -115,17 +123,17 @@ export function SettingsPanel({
             }
             onUpdateSettings({ restartEditorsOnSwitch: checked });
           }}
-          label="切换时重启编辑器(兼容codex 编辑器插件)"
-          description="默认关闭。开启后切换账号会强制关闭并重启你选中的编辑器。"
-          checkedText="重启"
-          uncheckedText="不重启"
+          label={copy.settings.restartEditorsOnSwitch.label}
+          description={copy.settings.restartEditorsOnSwitch.description}
+          checkedText={copy.settings.restartEditorsOnSwitch.checkedText}
+          uncheckedText={copy.settings.restartEditorsOnSwitch.uncheckedText}
           disabled={savingSettings}
         />
 
         <div className="settingRow">
           <div className="settingMeta">
-            <strong>重启目标编辑器（单选）</strong>
-            <p>后台自动检测已安装的 VSCode/VSCode Insiders/Cursor/Antigravity/Kiro/Trae/Qoder。</p>
+            <strong>{copy.settings.restartEditorTargets.label}</strong>
+            <p>{copy.settings.restartEditorTargets.description}</p>
           </div>
           <EditorMultiSelect
             options={installedEditorApps}
@@ -140,22 +148,22 @@ export function SettingsPanel({
           />
         </div>
         {installedEditorApps.length === 0 && (
-          <p className="hint">当前未检测到支持重启的编辑器。</p>
+          <p className="hint">{copy.settings.noSupportedEditors}</p>
         )}
 
         <div className="settingRow">
           <div className="settingMeta">
-            <strong>状态栏展示</strong>
-            <p>控制状态栏菜单中显示“已用”还是“剩余”。</p>
+            <strong>{copy.settings.trayUsageDisplay.label}</strong>
+            <p>{copy.settings.trayUsageDisplay.description}</p>
           </div>
-          <div className="modeGroup" role="radiogroup" aria-label="状态栏展示模式">
+          <div className="modeGroup" role="radiogroup" aria-label={copy.settings.trayUsageDisplay.groupAriaLabel}>
             <button
               className={settings.trayUsageDisplayMode === "remaining" ? "primary" : "ghost"}
               disabled={savingSettings}
               onClick={() => onUpdateSettings({ trayUsageDisplayMode: "remaining" })}
               aria-pressed={settings.trayUsageDisplayMode === "remaining"}
             >
-              剩余
+              {copy.settings.trayUsageDisplay.remaining}
             </button>
             <button
               className={settings.trayUsageDisplayMode === "used" ? "primary" : "ghost"}
@@ -163,15 +171,15 @@ export function SettingsPanel({
               onClick={() => onUpdateSettings({ trayUsageDisplayMode: "used" })}
               aria-pressed={settings.trayUsageDisplayMode === "used"}
             >
-              已用
+              {copy.settings.trayUsageDisplay.used}
             </button>
           </div>
         </div>
 
         <div className="settingRow">
           <div className="settingMeta">
-            <strong>主题</strong>
-            <p>使用开关切换浅色和深色主题。</p>
+            <strong>{copy.settings.theme.label}</strong>
+            <p>{copy.settings.theme.description}</p>
           </div>
           <ThemeSwitch themeMode={themeMode} onToggle={onToggleTheme} />
         </div>

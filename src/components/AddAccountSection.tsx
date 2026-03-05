@@ -1,3 +1,5 @@
+import { useI18n } from "../i18n/I18nProvider";
+
 type AddAccountSectionProps = {
   startingAdd: boolean;
   addFlowActive: boolean;
@@ -13,6 +15,8 @@ export function AddAccountSection({
   onSmartSwitch,
   smartSwitching,
 }: AddAccountSectionProps) {
+  const { copy } = useI18n();
+
   return (
     <section className="importBar">
       <div className="importInfo">
@@ -20,10 +24,10 @@ export function AddAccountSection({
           className="smartSwitchButton importSmartSwitch"
           onClick={onSmartSwitch}
           disabled={smartSwitching}
-          title="智能切换"
-          aria-label="智能切换"
+          title={copy.addAccount.smartSwitch}
+          aria-label={copy.addAccount.smartSwitch}
         >
-          智能切换
+          {copy.addAccount.smartSwitch}
         </button>
       </div>
       <div className="importRow">
@@ -32,7 +36,11 @@ export function AddAccountSection({
           onClick={onStartAddAccount}
           disabled={startingAdd || addFlowActive}
         >
-          {startingAdd ? "启动中..." : addFlowActive ? "等待授权中..." : "添加账号"}
+          {startingAdd
+            ? copy.addAccount.startingButton
+            : addFlowActive
+              ? copy.addAccount.waitingButton
+              : copy.addAccount.startButton}
         </button>
       </div>
     </section>

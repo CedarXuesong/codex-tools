@@ -22,13 +22,19 @@ export function toProgressWidth(value: number | undefined | null): string {
   return `${clamped}%`;
 }
 
-export function formatPlan(plan: string | null | undefined): string {
+export function formatPlan(
+  plan: string | null | undefined,
+  labels?: Record<string, string>,
+): string {
   if (!plan) {
-    return "Unknown";
+    return labels?.unknown ?? "Unknown";
   }
   const normalized = plan.trim().toLowerCase();
   if (!normalized) {
-    return "Unknown";
+    return labels?.unknown ?? "Unknown";
+  }
+  if (labels?.[normalized]) {
+    return labels[normalized];
   }
   if (normalized === "free") return "Free";
   if (normalized === "plus") return "Plus";
@@ -50,24 +56,34 @@ export function planTone(plan: string | null | undefined): string {
   return "unknown";
 }
 
-export function formatResetAt(epochSec: number | null | undefined): string {
+export function formatResetAt(epochSec: number | null | undefined, locale?: string): string {
   if (!epochSec) {
     return "--";
   }
-  return new Date(epochSec * 1000).toLocaleString();
+  return new Date(epochSec * 1000).toLocaleString(locale);
 }
 
-export function formatWindowLabel(window: UsageWindow | null, fallback: string): string {
+type WindowLabelOptions = {
+  fallback: string;
+  oneWeek: string;
+  hourSuffix: string;
+  minuteSuffix: string;
+};
+
+export function formatWindowLabel(
+  window: UsageWindow | null,
+  { fallback, oneWeek, hourSuffix, minuteSuffix }: WindowLabelOptions,
+): string {
   if (!window?.windowSeconds) {
     return fallback;
   }
   const hours = Math.round(window.windowSeconds / 3600);
   if (hours >= 24 * 7) {
-    return "1 Week";
+    return oneWeek;
   }
   if (hours > 0) {
-    return `${hours}h`;
+    return `${hours}${hourSuffix}`;
   }
   const mins = Math.round(window.windowSeconds / 60);
-  return `${mins}m`;
+  return `${mins}${minuteSuffix}`;
 }

@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from "react";
+import { useI18n } from "../i18n/I18nProvider";
 import type { AccountSummary } from "../types/app";
 import {
   formatPlan,
@@ -47,13 +48,14 @@ export function AccountCard({
   onSwitch,
   onDelete,
 }: AccountCardProps) {
+  const { copy, locale } = useI18n();
   const usage = account.usage;
   const fiveHour = usage?.fiveHour ?? null;
   const oneWeek = usage?.oneWeek ?? null;
   const normalizedPlan = account.planType || usage?.planType;
-  const planLabel = formatPlan(normalizedPlan);
+  const planLabel = formatPlan(normalizedPlan, copy.accountCard.planLabels);
   const tone = planTone(normalizedPlan);
-  const launchLabel = isSwitching ? "启动中" : "切换并启动";
+  const launchLabel = isSwitching ? copy.accountCard.launching : copy.accountCard.launch;
 
   const handleLaunch = () => {
     if (isSwitching) return;
@@ -75,13 +77,13 @@ export function AccountCard({
     >
       <div className="stamps">
         <span className="stamp stampPlan">{planLabel}</span>
-        {account.isCurrent && <span className="stamp stampCurrent">当前</span>}
+        {account.isCurrent && <span className="stamp stampCurrent">{copy.accountCard.currentStamp}</span>}
       </div>
       <button
         className={`cardDeleteIcon ${isDeletePending ? "isPending" : ""}`}
         onClick={() => onDelete(account)}
-        aria-label={isDeletePending ? "再次点击确认删除账号" : "删除账号"}
-        title={isDeletePending ? "再次点击确认删除" : "删除账号"}
+        aria-label={isDeletePending ? copy.accountCard.deleteConfirm : copy.accountCard.delete}
+        title={isDeletePending ? copy.accountCard.deleteConfirm : copy.accountCard.delete}
       >
         <svg className="iconGlyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M3 6h18" />
@@ -99,35 +101,62 @@ export function AccountCard({
 
       <div className="usageRow">
         <div className="usageTitle">
-          <span>{formatWindowLabel(fiveHour, "5h")}</span>
+          <span>
+            {formatWindowLabel(fiveHour, {
+              fallback: copy.accountCard.fiveHourFallback,
+              oneWeek: copy.accountCard.oneWeekLabel,
+              hourSuffix: copy.accountCard.hourSuffix,
+              minuteSuffix: copy.accountCard.minuteSuffix,
+            })}
+          </span>
           <div className="usageStats">
-            <strong>已用 {percent(fiveHour?.usedPercent)}</strong>
-            <em>剩余 {percent(remainingPercent(fiveHour))}</em>
+            <strong>
+              {copy.accountCard.used} {percent(fiveHour?.usedPercent)}
+            </strong>
+            <em>
+              {copy.accountCard.remaining} {percent(remainingPercent(fiveHour))}
+            </em>
           </div>
         </div>
         <div className="barTrack">
           <div className="barFill hot" style={{ width: toProgressWidth(fiveHour?.usedPercent) }} />
         </div>
-        <small>重置时间：{formatResetAt(fiveHour?.resetAt)}</small>
+        <small>
+          {copy.accountCard.resetAt}：{formatResetAt(fiveHour?.resetAt, locale)}
+        </small>
       </div>
 
       <div className="usageRow">
         <div className="usageTitle">
-          <span>{formatWindowLabel(oneWeek, "1week")}</span>
+          <span>
+            {formatWindowLabel(oneWeek, {
+              fallback: copy.accountCard.oneWeekFallback,
+              oneWeek: copy.accountCard.oneWeekLabel,
+              hourSuffix: copy.accountCard.hourSuffix,
+              minuteSuffix: copy.accountCard.minuteSuffix,
+            })}
+          </span>
           <div className="usageStats">
-            <strong>已用 {percent(oneWeek?.usedPercent)}</strong>
-            <em>剩余 {percent(remainingPercent(oneWeek))}</em>
+            <strong>
+              {copy.accountCard.used} {percent(oneWeek?.usedPercent)}
+            </strong>
+            <em>
+              {copy.accountCard.remaining} {percent(remainingPercent(oneWeek))}
+            </em>
           </div>
         </div>
         <div className="barTrack">
           <div className="barFill cool" style={{ width: toProgressWidth(oneWeek?.usedPercent) }} />
         </div>
-        <small>重置时间：{formatResetAt(oneWeek?.resetAt)}</small>
+        <small>
+          {copy.accountCard.resetAt}：{formatResetAt(oneWeek?.resetAt, locale)}
+        </small>
       </div>
 
       {usage?.credits && (
         <p className="credits">
-          Credits: {usage.credits.unlimited ? "Unlimited" : usage.credits.balance ?? "--"}
+          {copy.accountCard.credits}:{" "}
+          {usage.credits.unlimited ? copy.accountCard.unlimited : usage.credits.balance ?? "--"}
         </p>
       )}
 
@@ -142,7 +171,7 @@ export function AccountCard({
           onKeyDown={handleLaunchKeyDown}
           aria-label={launchLabel}
           aria-disabled={isSwitching}
-          title={isSwitching ? "启动中..." : "切换并启动"}
+          title={isSwitching ? `${copy.accountCard.launching}...` : copy.accountCard.launch}
         >
           <LaunchIcon spinning={isSwitching} />
         </span>

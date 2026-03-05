@@ -1,4 +1,5 @@
 import type { AccountSummary } from "../types/app";
+import { useI18n } from "../i18n/I18nProvider";
 import { AccountCard } from "./AccountCard";
 
 type AccountsGridProps = {
@@ -18,12 +19,14 @@ export function AccountsGrid({
   onSwitch,
   onDelete,
 }: AccountsGridProps) {
+  const { copy } = useI18n();
+
   return (
     <section className="cards" aria-busy={loading}>
       {accounts.length === 0 && !loading && (
         <div className="emptyState">
-          <h3>还没有账号</h3>
-          <p>点击“添加账号”，完成授权后会自动出现在列表中。</p>
+          <h3>{copy.accountsGrid.emptyTitle}</h3>
+          <p>{copy.accountsGrid.emptyDescription}</p>
         </div>
       )}
 

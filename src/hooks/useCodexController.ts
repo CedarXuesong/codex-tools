@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
+import { useI18n } from "../i18n/I18nProvider";
 import type {
   AccountSummary,
   AppSettings,
@@ -20,15 +21,6 @@ const EDITOR_SCAN_MS = 60_000;
 const ADD_FLOW_TIMEOUT_MS = 10 * 60_000;
 const ADD_FLOW_POLL_MS = 2_500;
 const MANUAL_DOWNLOAD_URL = "https://github.com/170-carry/codex-tools/releases/latest";
-const EDITOR_LABEL_MAP: Record<string, string> = {
-  vscode: "VS Code",
-  vscodeInsiders: "Visual Studio Code - Insiders",
-  cursor: "Cursor",
-  antigravity: "Antigravity",
-  kiro: "Kiro",
-  trae: "Trae",
-  qoder: "Qoder",
-};
 const DEFAULT_SETTINGS: AppSettings = {
   launchAtStartup: false,
   trayUsageDisplayMode: "remaining",
@@ -39,6 +31,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export function useCodexController() {
+  const { copy } = useI18n();
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -96,10 +89,10 @@ export function useCodexController() {
           const data = await invoke<AppSettings>("update_app_settings", { patch });
           setSettings(data);
           if (!options?.silent) {
-            setNotice({ type: "ok", message: "设置已更新" });
+            setNotice({ type: "ok", message: copy.notices.settingsUpdated });
           }
         } catch (error) {
-          setNotice({ type: "error", message: `更新设置失败：${String(error)}` });
+          setNotice({ type: "error", message: copy.notices.updateSettingsFailed(String(error)) });
         } finally {
           if (shouldLockUi) {
             setSavingSettings(false);
@@ -114,7 +107,7 @@ export function useCodexController() {
       );
       return run;
     },
-    [],
+    [copy.notices],
   );
 
   const refreshUsage = useCallback(async (quiet = false) => {
@@ -127,26 +120,26 @@ export function useCodexController() {
       });
       setAccounts(data);
       if (!quiet) {
-        setNotice({ type: "ok", message: "用量已刷新" });
+        setNotice({ type: "ok", message: copy.notices.usageRefreshed });
       }
     } catch (error) {
       if (!quiet) {
-        setNotice({ type: "error", message: `刷新失败：${String(error)}` });
+        setNotice({ type: "error", message: copy.notices.refreshFailed(String(error)) });
       }
     } finally {
       if (!quiet) {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [copy.notices]);
 
   const restoreAuthAfterAddFlow = useCallback(async () => {
     try {
       await invoke<boolean>("restore_auth_after_add_flow");
     } catch (error) {
-      setNotice({ type: "error", message: `恢复原账号失败：${String(error)}` });
+      setNotice({ type: "error", message: copy.notices.restoreAuthFailed(String(error)) });
     }
-  }, []);
+  }, [copy.notices]);
 
   useEffect(() => {
     installingUpdateRef.current = installingUpdate;
@@ -182,13 +175,13 @@ export function useCodexController() {
       }
 
       setInstallingUpdate(true);
-      setUpdateProgress("准备下载更新...");
+      setUpdateProgress(copy.notices.preparingUpdateDownload);
       try {
         const update = knownUpdate ?? (await check());
         if (!update) {
           setPendingUpdate(null);
           setUpdateDialogOpen(false);
-          setNotice({ type: "ok", message: "当前已是最新版本" });
+          setNotice({ type: "ok", message: copy.notices.alreadyLatest });
           return;
         }
 
@@ -198,7 +191,7 @@ export function useCodexController() {
           if (event.event === "Started") {
             totalBytes = event.data.contentLength ?? 0;
             downloadedBytes = 0;
-            setUpdateProgress("开始下载更新...");
+            setUpdateProgress(copy.notices.updateDownloadStarted);
           } else if (event.event === "Progress") {
             downloadedBytes += event.data.chunkLength;
             if (totalBytes > 0) {
@@ -206,25 +199,25 @@ export function useCodexController() {
                 100,
                 Math.round((downloadedBytes / totalBytes) * 100),
               );
-              setUpdateProgress(`下载中 ${percentValue}%`);
+              setUpdateProgress(copy.notices.updateDownloadingPercent(percentValue));
             } else {
-              setUpdateProgress("下载中...");
+              setUpdateProgress(copy.notices.updateDownloading);
             }
           } else if (event.event === "Finished") {
-            setUpdateProgress("下载完成，准备安装...");
+            setUpdateProgress(copy.notices.updateDownloadFinished);
           }
         });
 
-        setUpdateProgress("安装完成，正在重启...");
+        setUpdateProgress(copy.notices.updateInstalling);
         await relaunch();
       } catch (error) {
-        setNotice({ type: "error", message: `安装更新失败：${String(error)}` });
+        setNotice({ type: "error", message: copy.notices.updateInstallFailed(String(error)) });
         setUpdateProgress(null);
       } finally {
         setInstallingUpdate(false);
       }
     },
-    [],
+    [copy.notices],
   );
 
   const checkForAppUpdate = useCallback(
@@ -245,7 +238,7 @@ export function useCodexController() {
           if (!quiet) {
             setNotice({
               type: "info",
-              message: `发现新版本 ${update.version}（当前 ${update.currentVersion}），已开始自动下载。`,
+              message: copy.notices.foundNewVersion(update.version, update.currentVersion),
             });
           }
           void installPendingUpdate(update);
@@ -253,12 +246,12 @@ export function useCodexController() {
           setPendingUpdate(null);
           setUpdateDialogOpen(false);
           if (!quiet) {
-            setNotice({ type: "ok", message: "当前已是最新版本" });
+            setNotice({ type: "ok", message: copy.notices.alreadyLatest });
           }
         }
       } catch (error) {
         if (!quiet) {
-          setNotice({ type: "error", message: `检查更新失败：${String(error)}` });
+          setNotice({ type: "error", message: copy.notices.updateCheckFailed(String(error)) });
         }
       } finally {
         if (!quiet) {
@@ -266,16 +259,16 @@ export function useCodexController() {
         }
       }
     },
-    [installPendingUpdate],
+    [copy.notices, installPendingUpdate],
   );
 
   const openManualDownloadPage = useCallback(async () => {
     try {
       await invoke("open_external_url", { url: MANUAL_DOWNLOAD_URL });
     } catch (error) {
-      setNotice({ type: "error", message: `打开下载页面失败：${String(error)}` });
+      setNotice({ type: "error", message: copy.notices.openManualDownloadFailed(String(error)) });
     }
-  }, []);
+  }, [copy.notices]);
 
   const closeUpdateDialog = useCallback(() => {
     setUpdateDialogOpen(false);
@@ -346,13 +339,13 @@ export function useCodexController() {
 
         if (!cancelled) {
           setAddFlow(null);
-          setNotice({ type: "ok", message: "授权成功，账号已自动添加并刷新。" });
+          setNotice({ type: "ok", message: copy.notices.addAccountSuccess });
         }
       } catch (error) {
         await restoreAuthAfterAddFlow();
         if (!cancelled) {
           setAddFlow(null);
-          setNotice({ type: "error", message: `自动导入失败：${String(error)}` });
+          setNotice({ type: "error", message: copy.notices.addAccountAutoImportFailed(String(error)) });
         }
       } finally {
         inFlight = false;
@@ -369,7 +362,7 @@ export function useCodexController() {
       if (!cancelled) {
         setAddFlow(null);
         void restoreAuthAfterAddFlow();
-        setNotice({ type: "error", message: "等待授权超时，请重新点击“添加账号”。" });
+        setNotice({ type: "error", message: copy.notices.addAccountTimeout });
       }
     }, ADD_FLOW_TIMEOUT_MS);
 
@@ -378,7 +371,7 @@ export function useCodexController() {
       clearInterval(timer);
       clearTimeout(timeoutTimer);
     };
-  }, [addFlow, loadAccounts, refreshUsage, restoreAuthAfterAddFlow]);
+  }, [addFlow, copy.notices, loadAccounts, refreshUsage, restoreAuthAfterAddFlow]);
 
   const onStartAddAccount = useCallback(async () => {
     if (addFlow) {
@@ -393,11 +386,11 @@ export function useCodexController() {
         baselineFingerprint: baseline.fingerprint,
       });
     } catch (error) {
-      setNotice({ type: "error", message: `无法启动登录流程：${String(error)}` });
+      setNotice({ type: "error", message: copy.notices.startLoginFlowFailed(String(error)) });
     } finally {
       setStartingAdd(false);
     }
-  }, [addFlow]);
+  }, [addFlow, copy.notices]);
 
   const onCancelAddFlow = useCallback(() => {
     setAddFlow(null);
@@ -414,7 +407,7 @@ export function useCodexController() {
         setPendingDeleteId((current) => (current === account.id ? null : current));
         deleteConfirmTimerRef.current = null;
       }, 5_000);
-      setNotice({ type: "info", message: `再次点击删除账号 ${account.label} 以确认。` });
+      setNotice({ type: "info", message: copy.notices.deleteConfirm(account.label) });
       return;
     }
 
@@ -427,11 +420,11 @@ export function useCodexController() {
     try {
       await invoke<void>("delete_account", { id: account.id });
       setAccounts((prev) => prev.filter((item) => item.id !== account.id));
-      setNotice({ type: "ok", message: "账号已删除" });
+      setNotice({ type: "ok", message: copy.notices.accountDeleted });
     } catch (error) {
-      setNotice({ type: "error", message: `删除失败：${String(error)}` });
+      setNotice({ type: "error", message: copy.notices.deleteFailed(String(error)) });
     }
-  }, [pendingDeleteId]);
+  }, [copy.notices, pendingDeleteId]);
 
   const onSwitch = useCallback(
     async (account: AccountSummary) => {
@@ -448,26 +441,26 @@ export function useCodexController() {
 
         let baseNotice: Notice;
         if (!settings.launchCodexAfterSwitch) {
-          baseNotice = { type: "ok", message: "账号已切换（未自动启动 Codex）。" };
+          baseNotice = { type: "ok", message: copy.notices.switchedOnly };
         } else if (result.usedFallbackCli) {
           baseNotice = {
             type: "info",
-            message: "账号已切换。未找到本地 Codex.app，已尝试通过 codex app 启动。",
+            message: copy.notices.switchedAndLaunchByCli,
           };
         } else {
-          baseNotice = { type: "ok", message: "账号已切换，正在启动 Codex。" };
+          baseNotice = { type: "ok", message: copy.notices.switchedAndLaunching };
         }
 
         if (settings.syncOpencodeOpenaiAuth) {
           if (result.opencodeSyncError) {
             baseNotice = {
               type: "error",
-              message: `${baseNotice.message} Opencode 同步失败：${result.opencodeSyncError}`,
+              message: copy.notices.opencodeSyncFailed(baseNotice.message, result.opencodeSyncError),
             };
           } else if (result.opencodeSynced) {
             baseNotice = {
               ...baseNotice,
-              message: `${baseNotice.message} 已同步 Opencode OpenAI 认证。`,
+              message: copy.notices.opencodeSynced(baseNotice.message),
             };
           }
         }
@@ -476,32 +469,34 @@ export function useCodexController() {
           if (result.editorRestartError) {
             baseNotice = {
               type: "error",
-              message: `${baseNotice.message} 编辑器重启失败：${result.editorRestartError}`,
+              message: copy.notices.editorRestartFailed(baseNotice.message, result.editorRestartError),
             };
           } else if (result.restartedEditorApps.length > 0) {
             const restartedLabels = result.restartedEditorApps
-              .map((id) => EDITOR_LABEL_MAP[id] ?? id)
+              .map((id) => copy.editorAppLabels[id] ?? id)
               .join(" / ");
             baseNotice = {
               ...baseNotice,
-              message: `${baseNotice.message} 已重启编辑器：${restartedLabels}`,
+              message: copy.notices.editorsRestarted(baseNotice.message, restartedLabels),
             };
           } else {
             baseNotice = {
               ...baseNotice,
-              message: `${baseNotice.message} 未检测到可重启的已安装编辑器。`,
+              message: copy.notices.noEditorRestarted(baseNotice.message),
             };
           }
         }
 
         setNotice(baseNotice);
       } catch (error) {
-        setNotice({ type: "error", message: `切换失败：${String(error)}` });
+        setNotice({ type: "error", message: copy.notices.switchFailed(String(error)) });
       } finally {
         setSwitchingId(null);
       }
     },
     [
+      copy.editorAppLabels,
+      copy.notices,
       loadAccounts,
       settings.launchCodexAfterSwitch,
       settings.syncOpencodeOpenaiAuth,
@@ -517,19 +512,19 @@ export function useCodexController() {
 
     const target = pickBestRemainingAccount(sortedAccounts);
     if (!target) {
-      setNotice({ type: "info", message: "暂无可切换账号，请先添加账号。" });
+      setNotice({ type: "info", message: copy.notices.smartSwitchNoTarget });
       return;
     }
     if (target.isCurrent) {
       setNotice({
         type: "info",
-        message: "当前账号已是最优余量账号（优先 1week，其次 5h）。",
+        message: copy.notices.smartSwitchAlreadyBest,
       });
       return;
     }
 
     await onSwitch(target);
-  }, [onSwitch, sortedAccounts, switchingId]);
+  }, [copy.notices, onSwitch, sortedAccounts, switchingId]);
 
   return {
     accounts: sortedAccounts,
