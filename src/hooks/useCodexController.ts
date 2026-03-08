@@ -6,12 +6,17 @@ import { check } from "@tauri-apps/plugin-updater";
 import { useI18n } from "../i18n/I18nProvider";
 import type {
   AccountSummary,
+  ApiProxyStatus,
   AppSettings,
   AddFlow,
+  AuthJsonImportInput,
+  CloudflaredStatus,
   CurrentAuthStatus,
+  ImportAccountsResult,
   InstalledEditorApp,
   Notice,
   PendingUpdateInfo,
+  StartCloudflaredTunnelInput,
   SwitchAccountResult,
   UpdateSettingsOptions,
 } from "../types/app";
@@ -21,6 +26,8 @@ const REFRESH_MS = 30_000;
 const EDITOR_SCAN_MS = 60_000;
 const ADD_FLOW_TIMEOUT_MS = 10 * 60_000;
 const ADD_FLOW_POLL_MS = 2_500;
+const API_PROXY_POLL_MS = 4_000;
+const CLOUDFLARED_POLL_MS = 3_000;
 const MANUAL_DOWNLOAD_URL = "https://github.com/170-carry/codex-tools/releases/latest";
 const DEFAULT_SETTINGS: AppSettings = {
   launchAtStartup: false,
@@ -30,14 +37,83 @@ const DEFAULT_SETTINGS: AppSettings = {
   restartEditorsOnSwitch: false,
   restartEditorTargets: [],
 };
+const DEFAULT_API_PROXY_STATUS: ApiProxyStatus = {
+  running: false,
+  port: null,
+  apiKey: null,
+  baseUrl: null,
+  activeAccountId: null,
+  activeAccountLabel: null,
+  lastError: null,
+};
+const DEFAULT_CLOUDFLARED_STATUS: CloudflaredStatus = {
+  installed: false,
+  binaryPath: null,
+  running: false,
+  tunnelMode: null,
+  publicUrl: null,
+  customHostname: null,
+  useHttp2: false,
+  lastError: null,
+};
+
+function buildImportNotice(result: ImportAccountsResult, prefix: string): Notice {
+  const successCount = result.importedCount + result.updatedCount;
+  const failureCount = result.failures.length;
+  const firstFailure = result.failures[0];
+
+  if (successCount === 0) {
+    if (firstFailure) {
+      return {
+        type: "error",
+        message: `${prefix}失败：${firstFailure.source}，${firstFailure.error}`,
+      };
+    }
+    return {
+      type: "error",
+      message: `${prefix}失败：没有可导入的有效 JSON。`,
+    };
+  }
+
+  const segments: string[] = [];
+  if (result.importedCount > 0) {
+    segments.push(`新增 ${result.importedCount} 个`);
+  }
+  if (result.updatedCount > 0) {
+    segments.push(`更新 ${result.updatedCount} 个`);
+  }
+  if (failureCount > 0) {
+    segments.push(`失败 ${failureCount} 个`);
+  }
+
+  const suffix =
+    failureCount > 0 && firstFailure
+      ? ` 首个失败：${firstFailure.source}，${firstFailure.error}`
+      : "";
+
+  return {
+    type: failureCount > 0 ? "info" : "ok",
+    message: `${prefix}完成：${segments.join("，")}。${suffix}`.trim(),
+  };
+}
 
 export function useCodexController() {
   const { copy } = useI18n();
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [startingAdd, setStartingAdd] = useState(false);
   const [addFlow, setAddFlow] = useState<AddFlow | null>(null);
+  const [importingUpload, setImportingUpload] = useState(false);
+  const [apiProxyStatus, setApiProxyStatus] = useState<ApiProxyStatus>(DEFAULT_API_PROXY_STATUS);
+  const [cloudflaredStatus, setCloudflaredStatus] = useState<CloudflaredStatus>(DEFAULT_CLOUDFLARED_STATUS);
+  const [startingApiProxy, setStartingApiProxy] = useState(false);
+  const [stoppingApiProxy, setStoppingApiProxy] = useState(false);
+  const [refreshingApiProxyKey, setRefreshingApiProxyKey] = useState(false);
+  const [installingCloudflared, setInstallingCloudflared] = useState(false);
+  const [startingCloudflared, setStartingCloudflared] = useState(false);
+  const [stoppingCloudflared, setStoppingCloudflared] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -50,6 +126,7 @@ export function useCodexController() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [installedEditorApps, setInstalledEditorApps] = useState<InstalledEditorApp[]>([]);
   const installingUpdateRef = useRef(false);
+  const addFlowCancelledRef = useRef(false);
   const deleteConfirmTimerRef = useRef<number | null>(null);
   const settingsUpdateQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -75,6 +152,24 @@ export function useCodexController() {
       setInstalledEditorApps(data);
     } catch {
       setInstalledEditorApps([]);
+    }
+  }, []);
+
+  const loadApiProxyStatus = useCallback(async () => {
+    try {
+      const data = await invoke<ApiProxyStatus>("get_api_proxy_status");
+      setApiProxyStatus(data);
+    } catch {
+      setApiProxyStatus(DEFAULT_API_PROXY_STATUS);
+    }
+  }, []);
+
+  const loadCloudflaredStatus = useCallback(async () => {
+    try {
+      const data = await invoke<CloudflaredStatus>("get_cloudflared_status");
+      setCloudflaredStatus(data);
+    } catch {
+      setCloudflaredStatus(DEFAULT_CLOUDFLARED_STATUS);
     }
   }, []);
 
@@ -141,6 +236,22 @@ export function useCodexController() {
       setNotice({ type: "error", message: copy.notices.restoreAuthFailed(String(error)) });
     }
   }, [copy.notices]);
+
+  const applyImportResult = useCallback(
+    async (result: ImportAccountsResult, prefix: string) => {
+      const successCount = result.importedCount + result.updatedCount;
+      if (successCount > 0) {
+        await loadAccounts();
+      }
+
+      if (successCount > 0 && result.failures.length === 0) {
+        setAddDialogOpen(false);
+      }
+
+      setNotice(buildImportNotice(result, prefix));
+    },
+    [loadAccounts],
+  );
 
   useEffect(() => {
     installingUpdateRef.current = installingUpdate;
@@ -283,6 +394,8 @@ export function useCodexController() {
         await loadInstalledEditorApps();
         await loadSettings();
         await loadAccounts();
+        await loadApiProxyStatus();
+        await loadCloudflaredStatus();
         await refreshUsage(true);
         await checkForAppUpdate(true);
       } finally {
@@ -307,7 +420,43 @@ export function useCodexController() {
       clearInterval(usageTimer);
       clearInterval(editorTimer);
     };
-  }, [checkForAppUpdate, loadAccounts, loadInstalledEditorApps, loadSettings, refreshUsage]);
+  }, [
+    checkForAppUpdate,
+    loadAccounts,
+    loadApiProxyStatus,
+    loadCloudflaredStatus,
+    loadInstalledEditorApps,
+    loadSettings,
+    refreshUsage,
+  ]);
+
+  useEffect(() => {
+    if (!apiProxyStatus.running) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      void loadApiProxyStatus();
+    }, API_PROXY_POLL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [apiProxyStatus.running, loadApiProxyStatus]);
+
+  useEffect(() => {
+    if (!cloudflaredStatus.running) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      void loadCloudflaredStatus();
+    }, CLOUDFLARED_POLL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [cloudflaredStatus.running, loadCloudflaredStatus]);
 
   useEffect(() => {
     let disposed = false;
@@ -364,6 +513,7 @@ export function useCodexController() {
 
         if (!cancelled) {
           setAddFlow(null);
+          setAddDialogOpen(false);
           setNotice({ type: "ok", message: copy.notices.addAccountSuccess });
         }
       } catch (error) {
@@ -399,14 +549,23 @@ export function useCodexController() {
   }, [addFlow, copy.notices, loadAccounts, refreshUsage, restoreAuthAfterAddFlow]);
 
   const onStartAddAccount = useCallback(async () => {
-    if (addFlow) {
+    if (addFlow || startingAdd || importingUpload) {
       return;
     }
 
+    addFlowCancelledRef.current = false;
+    setAddDialogOpen(true);
     setStartingAdd(true);
     try {
       const baseline = await invoke<CurrentAuthStatus>("get_current_auth_status");
+      if (addFlowCancelledRef.current) {
+        return;
+      }
       await invoke<void>("launch_codex_login");
+      if (addFlowCancelledRef.current) {
+        await restoreAuthAfterAddFlow();
+        return;
+      }
       setAddFlow({
         baselineFingerprint: baseline.fingerprint,
       });
@@ -415,12 +574,152 @@ export function useCodexController() {
     } finally {
       setStartingAdd(false);
     }
-  }, [addFlow, copy.notices]);
+  }, [addFlow, copy.notices, importingUpload, restoreAuthAfterAddFlow, startingAdd]);
 
-  const onCancelAddFlow = useCallback(() => {
-    setAddFlow(null);
-    void restoreAuthAfterAddFlow();
-  }, [restoreAuthAfterAddFlow]);
+  const onOpenAddDialog = useCallback(() => {
+    setAddDialogOpen(true);
+  }, []);
+
+  const onCloseAddDialog = useCallback(() => {
+    if (importingUpload) {
+      return;
+    }
+
+    addFlowCancelledRef.current = true;
+    if (addFlow) {
+      setAddFlow(null);
+      void restoreAuthAfterAddFlow();
+    }
+    setAddDialogOpen(false);
+  }, [addFlow, importingUpload, restoreAuthAfterAddFlow]);
+
+  const onImportAuthFiles = useCallback(
+    async (items: AuthJsonImportInput[]) => {
+      if (items.length === 0) {
+        setNotice({ type: "error", message: "请选择要导入的 JSON 文件或文件夹。" });
+        return;
+      }
+
+      setImportingUpload(true);
+      try {
+        const result = await invoke<ImportAccountsResult>("import_auth_json_accounts", {
+          items,
+        });
+        await applyImportResult(result, "文件导入");
+      } catch (error) {
+        setNotice({ type: "error", message: `文件导入失败：${String(error)}` });
+      } finally {
+        setImportingUpload(false);
+      }
+    },
+    [applyImportResult],
+  );
+
+  const onStartApiProxy = useCallback(async (port?: number | null) => {
+    if (startingApiProxy || apiProxyStatus.running) {
+      return;
+    }
+
+    setStartingApiProxy(true);
+    try {
+      const status = await invoke<ApiProxyStatus>("start_api_proxy", {
+        port: port ?? null,
+      });
+      setApiProxyStatus(status);
+      const target = status.port ? `127.0.0.1:${status.port}` : "本地端口";
+      setNotice({ type: "ok", message: `API 反代已启动：${target}` });
+    } catch (error) {
+      setNotice({ type: "error", message: `启动 API 反代失败：${String(error)}` });
+    } finally {
+      setStartingApiProxy(false);
+    }
+  }, [apiProxyStatus.running, startingApiProxy]);
+
+  const onStopApiProxy = useCallback(async () => {
+    if (stoppingApiProxy || !apiProxyStatus.running) {
+      return;
+    }
+
+    setStoppingApiProxy(true);
+    try {
+      const status = await invoke<ApiProxyStatus>("stop_api_proxy");
+      setApiProxyStatus(status);
+      setNotice({ type: "ok", message: "API 反代已停止" });
+    } catch (error) {
+      setNotice({ type: "error", message: `停止 API 反代失败：${String(error)}` });
+    } finally {
+      setStoppingApiProxy(false);
+    }
+  }, [apiProxyStatus.running, stoppingApiProxy]);
+
+  const onRefreshApiProxyKey = useCallback(async () => {
+    if (refreshingApiProxyKey) {
+      return;
+    }
+
+    setRefreshingApiProxyKey(true);
+    try {
+      const status = await invoke<ApiProxyStatus>("refresh_api_proxy_key");
+      setApiProxyStatus(status);
+      setNotice({ type: "ok", message: "API Key 已刷新" });
+    } catch (error) {
+      setNotice({ type: "error", message: `刷新 API Key 失败：${String(error)}` });
+    } finally {
+      setRefreshingApiProxyKey(false);
+    }
+  }, [refreshingApiProxyKey]);
+
+  const onInstallCloudflared = useCallback(async () => {
+    if (installingCloudflared) {
+      return;
+    }
+
+    setInstallingCloudflared(true);
+    try {
+      const status = await invoke<CloudflaredStatus>("install_cloudflared");
+      setCloudflaredStatus(status);
+      setNotice({ type: "ok", message: "cloudflared 安装完成" });
+    } catch (error) {
+      setNotice({ type: "error", message: `安装 cloudflared 失败：${String(error)}` });
+    } finally {
+      setInstallingCloudflared(false);
+    }
+  }, [installingCloudflared]);
+
+  const onStartCloudflared = useCallback(async (input: StartCloudflaredTunnelInput) => {
+    if (startingCloudflared || cloudflaredStatus.running) {
+      return;
+    }
+
+    setStartingCloudflared(true);
+    try {
+      const status = await invoke<CloudflaredStatus>("start_cloudflared_tunnel", { input });
+      setCloudflaredStatus(status);
+      const target = status.publicUrl ?? "Cloudflare 公网地址";
+      setNotice({ type: "ok", message: `公网隧道已启动：${target}` });
+    } catch (error) {
+      setNotice({ type: "error", message: `启动 cloudflared 公网访问失败：${String(error)}` });
+    } finally {
+      setStartingCloudflared(false);
+    }
+  }, [cloudflaredStatus.running, startingCloudflared]);
+
+  const onStopCloudflared = useCallback(async () => {
+    if (stoppingCloudflared || !cloudflaredStatus.running) {
+      return;
+    }
+
+    setStoppingCloudflared(true);
+    try {
+      const status = await invoke<CloudflaredStatus>("stop_cloudflared_tunnel");
+      setCloudflaredStatus(status);
+      setNotice({ type: "ok", message: "cloudflared 公网访问已停止" });
+    } catch (error) {
+      setNotice({ type: "error", message: `停止 cloudflared 公网访问失败：${String(error)}` });
+    } finally {
+      setStoppingCloudflared(false);
+    }
+  }, [cloudflaredStatus.running, stoppingCloudflared]);
 
   const onDelete = useCallback(async (account: AccountSummary) => {
     if (pendingDeleteId !== account.id) {
@@ -555,8 +854,18 @@ export function useCodexController() {
     accounts: sortedAccounts,
     loading,
     refreshing,
+    addDialogOpen,
     startingAdd,
     addFlow,
+    importingUpload,
+    apiProxyStatus,
+    cloudflaredStatus,
+    startingApiProxy,
+    stoppingApiProxy,
+    refreshingApiProxyKey,
+    installingCloudflared,
+    startingCloudflared,
+    stoppingCloudflared,
     switchingId,
     pendingDeleteId,
     checkingUpdate,
@@ -575,8 +884,18 @@ export function useCodexController() {
     openManualDownloadPage,
     closeUpdateDialog,
     updateSettings,
+    onOpenAddDialog,
     onStartAddAccount,
-    onCancelAddFlow,
+    onCloseAddDialog,
+    onImportAuthFiles,
+    loadApiProxyStatus,
+    onStartApiProxy,
+    onStopApiProxy,
+    onRefreshApiProxyKey,
+    loadCloudflaredStatus,
+    onInstallCloudflared,
+    onStartCloudflared,
+    onStopCloudflared,
     onDelete,
     onSwitch,
     onSmartSwitch,

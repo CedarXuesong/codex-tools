@@ -3,7 +3,7 @@ import { useI18n } from "../i18n/I18nProvider";
 type AddAccountSectionProps = {
   startingAdd: boolean;
   addFlowActive: boolean;
-  onStartAddAccount: () => void;
+  onOpenAddDialog: () => void;
   onSmartSwitch: () => void;
   smartSwitching: boolean;
 };
@@ -11,7 +11,7 @@ type AddAccountSectionProps = {
 export function AddAccountSection({
   startingAdd,
   addFlowActive,
-  onStartAddAccount,
+  onOpenAddDialog,
   onSmartSwitch,
   smartSwitching,
 }: AddAccountSectionProps) {
@@ -33,8 +33,7 @@ export function AddAccountSection({
       <div className="importRow">
         <button
           className="primary"
-          onClick={onStartAddAccount}
-          disabled={startingAdd || addFlowActive}
+          onClick={onOpenAddDialog}
         >
           {startingAdd
             ? copy.addAccount.startingButton

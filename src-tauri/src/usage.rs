@@ -114,9 +114,7 @@ pub(crate) async fn fetch_usage_snapshot(
 }
 
 fn resolve_usage_urls() -> Vec<String> {
-    let base_url =
-        read_chatgpt_base_url_from_config().unwrap_or_else(|| DEFAULT_CHATGPT_BASE_URL.to_string());
-    let normalized = base_url.trim_end_matches('/');
+    let normalized = resolve_chatgpt_base_origin();
     let mut candidates = Vec::new();
 
     if let Some(origin) = normalized.strip_suffix(BACKEND_API_PREFIX) {
@@ -140,6 +138,12 @@ fn resolve_usage_urls() -> Vec<String> {
         }
     }
     deduped
+}
+
+pub(crate) fn resolve_chatgpt_base_origin() -> String {
+    let base_url =
+        read_chatgpt_base_url_from_config().unwrap_or_else(|| DEFAULT_CHATGPT_BASE_URL.to_string());
+    base_url.trim_end_matches('/').to_string()
 }
 
 fn format_reqwest_error(err: &reqwest::Error) -> String {

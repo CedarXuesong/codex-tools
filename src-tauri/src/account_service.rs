@@ -4,11 +4,17 @@ use tauri::AppHandle;
 
 use crate::auth::current_auth_account_id;
 use crate::auth::extract_auth;
+use crate::auth::normalize_imported_auth_json;
 use crate::auth::read_current_codex_auth;
 use crate::auth::read_current_codex_auth_optional;
 use crate::auth::refresh_chatgpt_auth_tokens;
 use crate::models::AccountSummary;
+use crate::models::AccountsStore;
+use crate::models::AuthJsonImportInput;
+use crate::models::ImportAccountFailure;
+use crate::models::ImportAccountsResult;
 use crate::models::StoredAccount;
+use crate::models::UsageSnapshot;
 use crate::state::AppState;
 use crate::store::load_store;
 use crate::store::save_store;
@@ -16,8 +22,16 @@ use crate::usage::fetch_usage_snapshot;
 use crate::utils::now_unix_seconds;
 use crate::utils::short_account;
 
-const DEACTIVATED_WORKSPACE_NOTICE: &str =
-    "该账号已被踢出 team 组织，请重新授权后再刷新。";
+const DEACTIVATED_WORKSPACE_NOTICE: &str = "该账号已被踢出 team 组织，请重新授权后再刷新。";
+
+struct PreparedImport {
+    auth_json: serde_json::Value,
+    account_id: String,
+    email: Option<String>,
+    plan_type: Option<String>,
+    usage: Option<UsageSnapshot>,
+    label: Option<String>,
+}
 
 pub(crate) async fn list_accounts_internal(
     app: &AppHandle,
@@ -39,72 +53,75 @@ pub(crate) async fn import_current_auth_account_internal(
     label: Option<String>,
 ) -> Result<AccountSummary, String> {
     let auth_json = read_current_codex_auth()?;
-    let extracted = extract_auth(&auth_json)?;
+    let prepared = prepare_auth_json_import(auth_json, label).await?;
+    commit_prepared_import(app, state, prepared).await
+}
 
-    // 用量拉取失败不阻断导入流程，避免账号无法入库。
-    let usage = fetch_usage_snapshot(&extracted.access_token, &extracted.account_id)
-        .await
-        .ok();
+pub(crate) async fn import_auth_json_accounts_internal(
+    app: &AppHandle,
+    state: &AppState,
+    items: Vec<AuthJsonImportInput>,
+) -> Result<ImportAccountsResult, String> {
+    if items.is_empty() {
+        return Err("请至少提供一个 JSON 文件或 JSON 文本".to_string());
+    }
 
-    let mut _guard = state.store_lock.lock().await;
-    let mut store = load_store(app)?;
+    let total_count = items.len();
+    let mut prepared_imports = Vec::with_capacity(total_count);
+    let mut failures = Vec::new();
 
-    let now = now_unix_seconds();
-    let fallback_label = extracted
-        .email
-        .clone()
-        .unwrap_or_else(|| format!("Codex {}", short_account(&extracted.account_id)));
-    let new_label = label
-        .and_then(|value| {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
+    for item in items {
+        let source = normalize_import_source(&item.source);
+        let auth_json = match parse_auth_json_content(&item.content) {
+            Ok(value) => value,
+            Err(error) => {
+                failures.push(ImportAccountFailure { source, error });
+                continue;
             }
-        })
-        .unwrap_or(fallback_label);
-
-    let summary = if let Some(existing) = store
-        .accounts
-        .iter_mut()
-        .find(|account| account.account_id == extracted.account_id)
-    {
-        existing.label = new_label;
-        existing.email = extracted.email;
-        existing.plan_type = usage
-            .as_ref()
-            .and_then(|snapshot| snapshot.plan_type.clone())
-            .or(extracted.plan_type)
-            .or(existing.plan_type.clone());
-        existing.auth_json = auth_json;
-        existing.updated_at = now;
-        existing.usage = usage;
-        existing.usage_error = None;
-        existing.to_summary(current_auth_account_id().as_deref())
-    } else {
-        let stored = StoredAccount {
-            id: uuid::Uuid::new_v4().to_string(),
-            label: new_label,
-            email: extracted.email,
-            account_id: extracted.account_id,
-            plan_type: usage
-                .as_ref()
-                .and_then(|snapshot| snapshot.plan_type.clone())
-                .or(extracted.plan_type),
-            auth_json,
-            added_at: now,
-            updated_at: now,
-            usage,
-            usage_error: None,
         };
-        let summary = stored.to_summary(current_auth_account_id().as_deref());
-        store.accounts.push(stored);
-        summary
+
+        match prepare_auth_json_import(auth_json, item.label).await {
+            Ok(prepared) => prepared_imports.push(prepared),
+            Err(error) => failures.push(ImportAccountFailure { source, error }),
+        }
+    }
+
+    if prepared_imports.is_empty() {
+        return Ok(ImportAccountsResult {
+            total_count,
+            imported_count: 0,
+            updated_count: 0,
+            failures,
+        });
+    }
+
+    let current_account_id = current_auth_account_id();
+    let (imported_count, updated_count) = {
+        let mut _guard = state.store_lock.lock().await;
+        let mut store = load_store(app)?;
+        let mut imported_count = 0usize;
+        let mut updated_count = 0usize;
+
+        for prepared in prepared_imports {
+            let (_, updated_existing) =
+                upsert_prepared_import(&mut store, prepared, current_account_id.as_deref());
+            if updated_existing {
+                updated_count += 1;
+            } else {
+                imported_count += 1;
+            }
+        }
+
+        save_store(app, &store)?;
+        (imported_count, updated_count)
     };
 
-    save_store(app, &store)?;
-    Ok(summary)
+    Ok(ImportAccountsResult {
+        total_count,
+        imported_count,
+        updated_count,
+        failures,
+    })
 }
 
 pub(crate) async fn delete_account_internal(
@@ -358,4 +375,138 @@ fn normalize_usage_error_message(raw_error: &str) -> String {
         return DEACTIVATED_WORKSPACE_NOTICE.to_string();
     }
     raw_error.to_string()
+}
+
+async fn prepare_auth_json_import(
+    auth_json: serde_json::Value,
+    label: Option<String>,
+) -> Result<PreparedImport, String> {
+    let extracted = extract_auth(&auth_json)?;
+
+    // 用量拉取失败不阻断导入流程，避免账号无法入库。
+    let usage = fetch_usage_snapshot(&extracted.access_token, &extracted.account_id)
+        .await
+        .ok();
+
+    Ok(PreparedImport {
+        auth_json,
+        account_id: extracted.account_id,
+        email: extracted.email,
+        plan_type: extracted.plan_type,
+        usage,
+        label,
+    })
+}
+
+async fn commit_prepared_import(
+    app: &AppHandle,
+    state: &AppState,
+    prepared: PreparedImport,
+) -> Result<AccountSummary, String> {
+    let current_account_id = current_auth_account_id();
+    let summary = {
+        let mut _guard = state.store_lock.lock().await;
+        let mut store = load_store(app)?;
+        let (summary, _) =
+            upsert_prepared_import(&mut store, prepared, current_account_id.as_deref());
+        save_store(app, &store)?;
+        summary
+    };
+
+    Ok(summary)
+}
+
+fn upsert_prepared_import(
+    store: &mut AccountsStore,
+    prepared: PreparedImport,
+    current_account_id: Option<&str>,
+) -> (AccountSummary, bool) {
+    let PreparedImport {
+        auth_json,
+        account_id,
+        email,
+        plan_type,
+        usage,
+        label,
+    } = prepared;
+
+    let now = now_unix_seconds();
+    let resolved_label = normalize_custom_label(label)
+        .unwrap_or_else(|| fallback_account_label(email.as_deref(), &account_id));
+
+    if let Some(existing) = store
+        .accounts
+        .iter_mut()
+        .find(|account| account.account_id == account_id)
+    {
+        existing.label = resolved_label;
+        existing.email = email;
+        existing.plan_type = usage
+            .as_ref()
+            .and_then(|snapshot| snapshot.plan_type.clone())
+            .or(plan_type)
+            .or(existing.plan_type.clone());
+        existing.auth_json = auth_json;
+        existing.updated_at = now;
+        existing.usage = usage;
+        existing.usage_error = None;
+        (existing.to_summary(current_account_id), true)
+    } else {
+        let stored = StoredAccount {
+            id: uuid::Uuid::new_v4().to_string(),
+            label: resolved_label,
+            email,
+            account_id,
+            plan_type: usage
+                .as_ref()
+                .and_then(|snapshot| snapshot.plan_type.clone())
+                .or(plan_type),
+            auth_json,
+            added_at: now,
+            updated_at: now,
+            usage,
+            usage_error: None,
+        };
+        let summary = stored.to_summary(current_account_id);
+        store.accounts.push(stored);
+        (summary, false)
+    }
+}
+
+fn parse_auth_json_content(raw: &str) -> Result<serde_json::Value, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("JSON 内容为空".to_string());
+    }
+
+    let normalized = trimmed.strip_prefix('\u{feff}').unwrap_or(trimmed);
+    let parsed =
+        serde_json::from_str(normalized).map_err(|error| format!("JSON 格式无效: {error}"))?;
+    Ok(normalize_imported_auth_json(parsed))
+}
+
+fn normalize_custom_label(label: Option<String>) -> Option<String> {
+    label.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn fallback_account_label(email: Option<&str>, account_id: &str) -> String {
+    email
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("Codex {}", short_account(account_id)))
+}
+
+fn normalize_import_source(source: &str) -> String {
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        "未命名 JSON".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }

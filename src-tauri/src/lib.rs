@@ -1,9 +1,11 @@
 mod account_service;
 mod auth;
 mod cli;
+mod cloudflared_service;
 mod editor_apps;
 mod models;
 mod opencode;
+mod proxy_service;
 mod settings_service;
 mod state;
 mod store;
@@ -22,11 +24,16 @@ use tauri::State;
 use tauri::WindowEvent;
 
 use models::AccountSummary;
+use models::ApiProxyStatus;
 use models::AppSettings;
 use models::AppSettingsPatch;
+use models::AuthJsonImportInput;
+use models::CloudflaredStatus;
 use models::CurrentAuthStatus;
 use models::EditorAppId;
+use models::ImportAccountsResult;
 use models::InstalledEditorApp;
+use models::StartCloudflaredTunnelInput;
 use models::SwitchAccountResult;
 use state::AppState;
 
@@ -52,6 +59,20 @@ async fn import_current_auth_account(
         account_service::import_current_auth_account_internal(&app, state.inner(), label).await?;
     let _ = tray::refresh_macos_tray_snapshot(&app);
     Ok(summary)
+}
+
+#[tauri::command]
+async fn import_auth_json_accounts(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    items: Vec<AuthJsonImportInput>,
+) -> Result<ImportAccountsResult, String> {
+    let result =
+        account_service::import_auth_json_accounts_internal(&app, state.inner(), items).await?;
+    if result.imported_count > 0 || result.updated_count > 0 {
+        let _ = tray::refresh_macos_tray_snapshot(&app);
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -301,6 +322,63 @@ async fn switch_account_and_launch(
     })
 }
 
+#[tauri::command]
+async fn get_api_proxy_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ApiProxyStatus, String> {
+    proxy_service::get_api_proxy_status_internal(&app, state.inner()).await
+}
+
+#[tauri::command]
+async fn start_api_proxy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    port: Option<u16>,
+) -> Result<ApiProxyStatus, String> {
+    proxy_service::start_api_proxy_internal(&app, state.inner(), port).await
+}
+
+#[tauri::command]
+async fn stop_api_proxy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ApiProxyStatus, String> {
+    proxy_service::stop_api_proxy_internal(&app, state.inner()).await
+}
+
+#[tauri::command]
+async fn refresh_api_proxy_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ApiProxyStatus, String> {
+    proxy_service::refresh_api_proxy_key_internal(&app, state.inner()).await
+}
+
+#[tauri::command]
+async fn get_cloudflared_status(state: State<'_, AppState>) -> Result<CloudflaredStatus, String> {
+    cloudflared_service::get_cloudflared_status_internal(state.inner()).await
+}
+
+#[tauri::command]
+async fn install_cloudflared(state: State<'_, AppState>) -> Result<CloudflaredStatus, String> {
+    cloudflared_service::install_cloudflared_internal(state.inner()).await
+}
+
+#[tauri::command]
+async fn start_cloudflared_tunnel(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: StartCloudflaredTunnelInput,
+) -> Result<CloudflaredStatus, String> {
+    cloudflared_service::start_cloudflared_tunnel_internal(&app, state.inner(), input).await
+}
+
+#[tauri::command]
+async fn stop_cloudflared_tunnel(state: State<'_, AppState>) -> Result<CloudflaredStatus, String> {
+    cloudflared_service::stop_cloudflared_tunnel_internal(state.inner()).await
+}
+
 fn force_stop_running_codex() {
     #[cfg(target_os = "macos")]
     {
@@ -422,6 +500,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             import_current_auth_account,
+            import_auth_json_accounts,
             delete_account,
             refresh_all_usage,
             get_app_settings,
@@ -432,7 +511,15 @@ pub fn run() {
             get_current_auth_status,
             launch_codex_login,
             restore_auth_after_add_flow,
-            switch_account_and_launch
+            switch_account_and_launch,
+            get_api_proxy_status,
+            start_api_proxy,
+            stop_api_proxy,
+            refresh_api_proxy_key,
+            get_cloudflared_status,
+            install_cloudflared,
+            start_cloudflared_tunnel,
+            stop_cloudflared_tunnel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

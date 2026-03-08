@@ -52,6 +52,61 @@ export type CurrentAuthStatus = {
   fingerprint: string | null;
 };
 
+export type AuthJsonImportInput = {
+  source: string;
+  content: string;
+  label: string | null;
+};
+
+export type ImportAccountFailure = {
+  source: string;
+  error: string;
+};
+
+export type ImportAccountsResult = {
+  totalCount: number;
+  importedCount: number;
+  updatedCount: number;
+  failures: ImportAccountFailure[];
+};
+
+export type ApiProxyStatus = {
+  running: boolean;
+  port: number | null;
+  apiKey: string | null;
+  baseUrl: string | null;
+  activeAccountId: string | null;
+  activeAccountLabel: string | null;
+  lastError: string | null;
+};
+
+export type CloudflaredTunnelMode = "quick" | "named";
+
+export type CloudflaredStatus = {
+  installed: boolean;
+  binaryPath: string | null;
+  running: boolean;
+  tunnelMode: CloudflaredTunnelMode | null;
+  publicUrl: string | null;
+  customHostname: string | null;
+  useHttp2: boolean;
+  lastError: string | null;
+};
+
+export type NamedCloudflaredTunnelInput = {
+  apiToken: string;
+  accountId: string;
+  zoneId: string;
+  hostname: string;
+};
+
+export type StartCloudflaredTunnelInput = {
+  apiProxyPort: number;
+  useHttp2: boolean;
+  mode: CloudflaredTunnelMode;
+  named: NamedCloudflaredTunnelInput | null;
+};
+
 export type Notice = {
   type: "ok" | "error" | "info";
   message: string;

@@ -1,6 +1,7 @@
 use base64::engine::general_purpose::URL_SAFE;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use serde_json::Map;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -124,6 +125,61 @@ pub(crate) fn remove_active_codex_auth() -> Result<(), String> {
     fs::remove_file(&path).map_err(|e| format!("删除 auth.json 失败 {}: {e}", path.display()))
 }
 
+pub(crate) fn normalize_imported_auth_json(auth_json: Value) -> Value {
+    let Some(root) = auth_json.as_object() else {
+        return auth_json;
+    };
+
+    if root.get("tokens").and_then(Value::as_object).is_some() {
+        return auth_json;
+    }
+
+    let Some(access_token) = root.get("access_token").and_then(Value::as_str) else {
+        return auth_json;
+    };
+    let Some(id_token) = root.get("id_token").and_then(Value::as_str) else {
+        return auth_json;
+    };
+
+    let mut tokens = Map::new();
+    tokens.insert(
+        "access_token".to_string(),
+        Value::String(access_token.to_string()),
+    );
+    tokens.insert("id_token".to_string(), Value::String(id_token.to_string()));
+
+    if let Some(refresh_token) = root.get("refresh_token").and_then(Value::as_str) {
+        tokens.insert(
+            "refresh_token".to_string(),
+            Value::String(refresh_token.to_string()),
+        );
+    }
+    if let Some(account_id) = root.get("account_id").and_then(Value::as_str) {
+        tokens.insert(
+            "account_id".to_string(),
+            Value::String(account_id.to_string()),
+        );
+    }
+
+    let mut normalized = Map::new();
+    normalized.insert(
+        "auth_mode".to_string(),
+        Value::String(
+            root.get("auth_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("chatgpt")
+                .to_string(),
+        ),
+    );
+    normalized.insert("tokens".to_string(), Value::Object(tokens));
+
+    if let Some(last_refresh) = root.get("last_refresh") {
+        normalized.insert("last_refresh".to_string(), last_refresh.clone());
+    }
+
+    Value::Object(normalized)
+}
+
 /// 解析当前 auth.json，提取账号标识和用量接口所需 token。
 ///
 /// 注意：`auth_mode` 在某些版本可能缺失，因此优先按 `tokens` 字段判断是否可用。
@@ -134,7 +190,7 @@ pub(crate) fn extract_auth(auth_json: &Value) -> Result<ExtractedAuth, String> {
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    let tokens = auth_json.get("tokens").and_then(Value::as_object);
+    let tokens = auth_token_object(auth_json);
     let tokens = match tokens {
         Some(value) => value,
         None => {
@@ -197,21 +253,15 @@ pub(crate) fn extract_auth(auth_json: &Value) -> Result<ExtractedAuth, String> {
 }
 
 pub(crate) fn current_auth_account_id() -> Option<String> {
-    read_current_codex_auth().ok().and_then(|auth_json| {
-        auth_json
-            .get("tokens")
-            .and_then(|value| value.get("account_id"))
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-    })
+    read_current_codex_auth()
+        .ok()
+        .and_then(|auth_json| extract_auth(&auth_json).ok())
+        .map(|auth| auth.account_id)
 }
 
 /// 为第三方客户端同步登录态时，提取可复用的 OpenAI OAuth token。
 pub(crate) fn extract_codex_oauth_tokens(auth_json: &Value) -> Result<CodexOAuthTokens, String> {
-    let tokens = auth_json
-        .get("tokens")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "auth.json 缺少 tokens".to_string())?;
+    let tokens = auth_token_object(auth_json).ok_or_else(|| "auth.json 缺少 tokens".to_string())?;
 
     let access_token = tokens
         .get("access_token")
@@ -247,10 +297,7 @@ pub(crate) fn extract_codex_oauth_tokens(auth_json: &Value) -> Result<CodexOAuth
 ///
 /// 返回更新后的 auth.json（仅内存对象，不会自动写盘）。
 pub(crate) async fn refresh_chatgpt_auth_tokens(auth_json: &Value) -> Result<Value, String> {
-    let tokens = auth_json
-        .get("tokens")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "auth.json 缺少 tokens".to_string())?;
+    let tokens = auth_token_object(auth_json).ok_or_else(|| "auth.json 缺少 tokens".to_string())?;
 
     let refresh_token = tokens
         .get("refresh_token")
@@ -328,6 +375,20 @@ pub(crate) async fn refresh_chatgpt_auth_tokens(auth_json: &Value) -> Result<Val
 fn codex_auth_path() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or_else(|| "无法读取 HOME 目录".to_string())?;
     Ok(home.join(".codex").join("auth.json"))
+}
+
+fn auth_token_object(auth_json: &Value) -> Option<&Map<String, Value>> {
+    auth_json
+        .get("tokens")
+        .and_then(Value::as_object)
+        .or_else(|| {
+            let root = auth_json.as_object()?;
+            if root.contains_key("access_token") && root.contains_key("id_token") {
+                Some(root)
+            } else {
+                None
+            }
+        })
 }
 
 fn decode_jwt_payload(token: &str) -> Result<Value, String> {

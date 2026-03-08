@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 use tauri::AppHandle;
@@ -142,10 +143,78 @@ fn write_store_file(path: &PathBuf, store: &AccountsStore) -> Result<(), String>
 
     let serialized =
         serde_json::to_string_pretty(store).map_err(|e| format!("序列化账号存储失败: {e}"))?;
-    fs::write(path, serialized)
-        .map_err(|e| format!("写入账号存储文件失败 {}: {e}", path.display()))?;
-    set_private_permissions(path);
+    write_file_atomically(path, serialized.as_bytes())?;
     Ok(())
+}
+
+fn write_file_atomically(path: &PathBuf, contents: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("无法解析存储目录 {}", path.display()))?;
+    let temp_path = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("accounts.json"),
+        Uuid::new_v4()
+    ));
+
+    let write_result = (|| -> Result<(), String> {
+        let mut temp_file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+            .map_err(|e| format!("创建临时存储文件失败 {}: {e}", temp_path.display()))?;
+        temp_file
+            .write_all(contents)
+            .map_err(|e| format!("写入临时存储文件失败 {}: {e}", temp_path.display()))?;
+        temp_file
+            .sync_all()
+            .map_err(|e| format!("刷新临时存储文件失败 {}: {e}", temp_path.display()))?;
+        drop(temp_file);
+        set_private_permissions(&temp_path);
+
+        #[cfg(target_family = "unix")]
+        {
+            fs::rename(&temp_path, path).map_err(|e| {
+                format!(
+                    "替换账号存储文件失败 {} -> {}: {e}",
+                    temp_path.display(),
+                    path.display()
+                )
+            })?;
+
+            let parent_dir = fs::File::open(parent)
+                .map_err(|e| format!("打开存储目录失败 {}: {e}", parent.display()))?;
+            parent_dir
+                .sync_all()
+                .map_err(|e| format!("刷新存储目录失败 {}: {e}", parent.display()))?;
+        }
+
+        #[cfg(not(target_family = "unix"))]
+        {
+            if path.exists() {
+                fs::remove_file(path)
+                    .map_err(|e| format!("移除旧账号存储文件失败 {}: {e}", path.display()))?;
+            }
+            fs::rename(&temp_path, path).map_err(|e| {
+                format!(
+                    "替换账号存储文件失败 {} -> {}: {e}",
+                    temp_path.display(),
+                    path.display()
+                )
+            })?;
+        }
+
+        set_private_permissions(path);
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    write_result
 }
 
 fn backup_corrupted_store_file(path: &PathBuf, raw: &str) -> Result<PathBuf, String> {

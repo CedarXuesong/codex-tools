@@ -8,6 +8,8 @@
 仓库地址：<https://github.com/170-carry/codex-tools>
 
 ## 更新日志
+- v0.5.0
+  1. 增加 API 反代功能
 - v0.4.1
   1. 增加日语韩语支持
 - v0.4.0

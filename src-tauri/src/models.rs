@@ -107,12 +107,86 @@ pub(crate) struct CurrentAuthStatus {
     pub(crate) fingerprint: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ExtractedAuth {
     pub(crate) account_id: String,
     pub(crate) access_token: String,
     pub(crate) email: Option<String>,
     pub(crate) plan_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AuthJsonImportInput {
+    pub(crate) source: String,
+    pub(crate) content: String,
+    pub(crate) label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportAccountFailure {
+    pub(crate) source: String,
+    pub(crate) error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportAccountsResult {
+    pub(crate) total_count: usize,
+    pub(crate) imported_count: usize,
+    pub(crate) updated_count: usize,
+    pub(crate) failures: Vec<ImportAccountFailure>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApiProxyStatus {
+    pub(crate) running: bool,
+    pub(crate) port: Option<u16>,
+    pub(crate) api_key: Option<String>,
+    pub(crate) base_url: Option<String>,
+    pub(crate) active_account_id: Option<String>,
+    pub(crate) active_account_label: Option<String>,
+    pub(crate) last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum CloudflaredTunnelMode {
+    Quick,
+    Named,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CloudflaredStatus {
+    pub(crate) installed: bool,
+    pub(crate) binary_path: Option<String>,
+    pub(crate) running: bool,
+    pub(crate) tunnel_mode: Option<CloudflaredTunnelMode>,
+    pub(crate) public_url: Option<String>,
+    pub(crate) custom_hostname: Option<String>,
+    pub(crate) use_http2: bool,
+    pub(crate) last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NamedCloudflaredTunnelInput {
+    pub(crate) api_token: String,
+    pub(crate) account_id: String,
+    pub(crate) zone_id: String,
+    pub(crate) hostname: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StartCloudflaredTunnelInput {
+    pub(crate) api_proxy_port: u16,
+    pub(crate) use_http2: bool,
+    pub(crate) mode: CloudflaredTunnelMode,
+    pub(crate) named: Option<NamedCloudflaredTunnelInput>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -152,6 +226,7 @@ pub(crate) struct AppSettings {
     pub(crate) sync_opencode_openai_auth: bool,
     pub(crate) restart_editors_on_switch: bool,
     pub(crate) restart_editor_targets: Vec<EditorAppId>,
+    pub(crate) api_proxy_api_key: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -163,6 +238,7 @@ impl Default for AppSettings {
             sync_opencode_openai_auth: false,
             restart_editors_on_switch: false,
             restart_editor_targets: Vec::new(),
+            api_proxy_api_key: None,
         }
     }
 }
