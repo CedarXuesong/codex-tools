@@ -234,6 +234,7 @@
     "dialogAriaLabel": "App settings",
     "title": "Settings",
     "subtitle": "Configure startup, tray usage display mode, and theme.",
+    "languageSubtitle": "Choose the interface language.",
     "close": "Close settings",
     "launchAtStartup": {
       "label": "Launch at startup",

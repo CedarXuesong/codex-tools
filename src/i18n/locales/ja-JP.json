@@ -234,6 +234,7 @@
     "dialogAriaLabel": "アプリ設定",
     "title": "設定",
     "subtitle": "起動設定、ステータスバー表示モード、テーマを設定できます。",
+    "languageSubtitle": "表示言語を選択します。",
     "close": "設定を閉じる",
     "launchAtStartup": {
       "label": "起動時に開始",

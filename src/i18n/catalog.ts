@@ -254,6 +254,7 @@ export type MessageCatalog = {
     dialogAriaLabel: string;
     title: string;
     subtitle: string;
+    languageSubtitle: string;
     close: string;
     launchAtStartup: {
       label: string;

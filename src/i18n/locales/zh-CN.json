@@ -234,6 +234,7 @@
     "dialogAriaLabel": "应用设置",
     "title": "设置",
     "subtitle": "可配置开机启动、状态栏显示模式和主题。",
+    "languageSubtitle": "选择界面语言",
     "close": "关闭设置",
     "launchAtStartup": {
       "label": "开机启动",

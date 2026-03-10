@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "./App.css";
 import { ApiProxyPanel } from "./components/ApiProxyPanel";
 import { AddAccountSection } from "./components/AddAccountSection";
@@ -15,11 +14,10 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { useCodexController } from "./hooks/useCodexController";
 import { useThemeMode } from "./hooks/useThemeMode";
 
-type AppTab = "accounts" | "proxy";
+type AppTab = "accounts" | "proxy" | "settings";
 
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("accounts");
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const { themeMode, toggleTheme } = useThemeMode();
   const {
     accounts,
@@ -31,6 +29,7 @@ function App() {
     importingUpload,
     switchingId,
     pendingDeleteId,
+    checkingUpdate,
     installingUpdate,
     updateProgress,
     pendingUpdate,
@@ -59,6 +58,7 @@ function App() {
     startingCloudflared,
     stoppingCloudflared,
     refreshUsage,
+    checkForAppUpdate,
     installPendingUpdate,
     openManualDownloadPage,
     closeUpdateDialog,
@@ -89,27 +89,27 @@ function App() {
   } = useCodexController();
 
   useEffect(() => {
-    let disposed = false;
-    let unlisten: UnlistenFn | null = null;
-    void listen("app-menu-open-settings", () => {
-      setSettingsOpen(true);
-    })
-      .then((fn) => {
-        if (disposed) {
-          void fn();
-          return;
-        }
-        unlisten = fn;
-      })
-      .catch(() => {});
-
-    return () => {
-      disposed = true;
-      if (unlisten) {
-        void unlisten();
+    const isMac =
+      typeof navigator !== "undefined" &&
+      /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key !== "r") {
+        return;
       }
+      const isTrigger = isMac ? event.metaKey : event.ctrlKey;
+      if (!isTrigger) {
+        return;
+      }
+      event.preventDefault();
+      void refreshUsage(false);
     };
-  }, []);
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [refreshUsage]);
 
   return (
     <div className="shell">
@@ -118,17 +118,8 @@ function App() {
         <AppTopBar
           onRefresh={() => void refreshUsage(false)}
           refreshing={refreshing}
-        />
-
-        <SettingsPanel
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          themeMode={themeMode}
-          onToggleTheme={toggleTheme}
-          settings={settings}
-          installedEditorApps={installedEditorApps}
-          savingSettings={savingSettings}
-          onUpdateSettings={(patch, options) => void updateSettings(patch, options)}
+          onGoHome={() => setActiveTab("accounts")}
+          showRefresh={activeTab === "accounts"}
         />
 
         <MetaStrip accountCount={accounts.length} currentCount={currentCount} />
@@ -174,7 +165,7 @@ function App() {
                 onDelete={(account) => void onDelete(account)}
               />
             </>
-          ) : (
+          ) : activeTab === "proxy" ? (
             <ApiProxyPanel
               status={apiProxyStatus}
               cloudflaredStatus={cloudflaredStatus}
@@ -218,14 +209,23 @@ function App() {
               onStartCloudflared={(input) => void onStartCloudflared(input)}
               onStopCloudflared={() => void onStopCloudflared()}
             />
+          ) : (
+            <SettingsPanel
+              themeMode={themeMode}
+              onToggleTheme={toggleTheme}
+              checkingUpdate={checkingUpdate}
+              onCheckUpdate={() => void checkForAppUpdate(false)}
+              settings={settings}
+              installedEditorApps={installedEditorApps}
+              savingSettings={savingSettings}
+              onUpdateSettings={(patch, options) => void updateSettings(patch, options)}
+            />
           )}
         </section>
       </main>
       <BottomDock
         activeTab={activeTab}
-        settingsOpen={settingsOpen}
         onSelectTab={setActiveTab}
-        onToggleSettings={() => setSettingsOpen((current) => !current)}
       />
     </div>
   );
