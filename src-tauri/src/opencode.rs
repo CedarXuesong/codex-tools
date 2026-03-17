@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
+#[cfg(target_os = "macos")]
 use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -209,13 +210,13 @@ fn detect_opencode_desktop_app_path() -> Option<PathBuf> {
         .flatten()
         {
             for relative in [
-                ["Programs", "Opencode", "Opencode.exe"],
-                ["Programs", "OpenCode", "OpenCode.exe"],
-                ["Programs", "opencode", "Opencode.exe"],
-                ["Programs", "opencode", "opencode.exe"],
-                ["Opencode", "Opencode.exe"],
-                ["OpenCode", "OpenCode.exe"],
-                ["opencode", "opencode.exe"],
+                &["Programs", "Opencode", "Opencode.exe"][..],
+                &["Programs", "OpenCode", "OpenCode.exe"][..],
+                &["Programs", "opencode", "Opencode.exe"][..],
+                &["Programs", "opencode", "opencode.exe"][..],
+                &["Opencode", "Opencode.exe"][..],
+                &["OpenCode", "OpenCode.exe"][..],
+                &["opencode", "opencode.exe"][..],
             ] {
                 let mut candidate = base.clone();
                 for segment in relative {

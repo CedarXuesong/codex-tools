@@ -116,6 +116,9 @@ fn find_spec(id: EditorAppId) -> Option<&'static EditorSpec> {
 }
 
 fn detect_editor_bundle_path(spec: &EditorSpec) -> Option<PathBuf> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = spec;
+
     #[cfg(target_os = "macos")]
     {
         let mut candidates = Vec::<PathBuf>::new();

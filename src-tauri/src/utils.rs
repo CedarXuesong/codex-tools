@@ -37,6 +37,9 @@ pub(crate) fn set_private_permissions(path: &Path) {
             let _ = fs::set_permissions(path, permissions);
         }
     }
+
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 pub(crate) fn prepare_process_path() {

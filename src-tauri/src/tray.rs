@@ -1,17 +1,22 @@
-use std::time::Duration;
-
 use tauri::AppHandle;
+#[cfg(target_os = "macos")]
 use tauri::Manager;
 
+#[cfg(target_os = "macos")]
 use crate::account_service::refresh_all_usage_internal;
+#[cfg(target_os = "macos")]
 use crate::auth::current_auth_account_id;
+#[cfg(target_os = "macos")]
 use crate::auth::current_auth_variant_key;
 use crate::i18n;
 use crate::models::AccountSummary;
 use crate::models::TrayUsageDisplayMode;
 use crate::models::UsageWindow;
+#[cfg(target_os = "macos")]
 use crate::state::AppState;
 use crate::store::load_store;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 
 const REFRESH_INTERVAL_SECONDS: u64 = 30;
 
