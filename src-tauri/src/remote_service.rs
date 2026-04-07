@@ -20,6 +20,7 @@ use crate::utils::find_command_path;
 use crate::utils::new_resolved_command;
 use crate::utils::now_unix_seconds;
 use crate::utils::prepend_path_entry;
+use crate::utils::try_set_private_permissions;
 
 const REMOTE_BINARY_NAME: &str = "codex-tools-proxyd";
 const REMOTE_DEPLOY_PROGRESS_EVENT: &str = "remote-deploy-progress";
@@ -1477,7 +1478,8 @@ struct RemotePlatform {
 }
 
 struct PreparedAuth {
-    temp_identity_file: Option<PathBuf>,
+    identity_file: Option<PathBuf>,
+    cleanup_identity_file: Option<PathBuf>,
     password: Option<String>,
 }
 
@@ -1497,34 +1499,33 @@ impl PreparedAuth {
                 fs::write(&temp_path, private_key).map_err(|error| {
                     format!("写入临时 SSH 私钥文件失败 {}: {error}", temp_path.display())
                 })?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mut perms = fs::metadata(&temp_path)
-                        .map_err(|error| format!("读取临时 SSH 私钥文件权限失败: {error}"))?
-                        .permissions();
-                    perms.set_mode(0o600);
-                    fs::set_permissions(&temp_path, perms)
-                        .map_err(|error| format!("设置临时 SSH 私钥文件权限失败: {error}"))?;
-                }
+                try_set_private_permissions(&temp_path).map_err(|error| {
+                    format!(
+                        "设置临时 SSH 私钥文件权限失败 {}: {error}",
+                        temp_path.display()
+                    )
+                })?;
                 Ok(Self {
-                    temp_identity_file: Some(temp_path),
+                    identity_file: Some(temp_path.clone()),
+                    cleanup_identity_file: Some(temp_path),
                     password: None,
                 })
             }
             RemoteAuthMode::KeyFile | RemoteAuthMode::KeyPath => Ok(Self {
-                temp_identity_file: server.identity_file.as_ref().map(PathBuf::from),
+                identity_file: server.identity_file.as_ref().map(PathBuf::from),
+                cleanup_identity_file: None,
                 password: None,
             }),
             RemoteAuthMode::Password => Ok(Self {
-                temp_identity_file: None,
+                identity_file: None,
+                cleanup_identity_file: None,
                 password: server.password.clone(),
             }),
         }
     }
 
     fn identity_file_path(&self) -> Option<&Path> {
-        self.temp_identity_file.as_deref()
+        self.identity_file.as_deref()
     }
 
     fn new_command(&self, program: &str) -> Command {
@@ -1545,7 +1546,7 @@ impl PreparedAuth {
 
 impl Drop for PreparedAuth {
     fn drop(&mut self) {
-        if let Some(path) = self.temp_identity_file.as_ref() {
+        if let Some(path) = self.cleanup_identity_file.as_ref() {
             let _ = fs::remove_file(path);
         }
     }

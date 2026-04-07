@@ -27,19 +27,90 @@ pub(crate) fn truncate_for_error(value: &str, max_len: usize) -> String {
 }
 
 pub(crate) fn set_private_permissions(path: &Path) {
+    let _ = try_set_private_permissions(path);
+}
+
+pub(crate) fn try_set_private_permissions(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        if let Ok(metadata) = fs::metadata(path) {
-            let mut permissions = metadata.permissions();
-            permissions.set_mode(0o600);
-            let _ = fs::set_permissions(path, permissions);
-        }
+        let mut permissions = fs::metadata(path)
+            .map_err(|error| format!("读取文件权限失败 {}: {error}", path.display()))?
+            .permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(path, permissions)
+            .map_err(|error| format!("设置文件权限失败 {}: {error}", path.display()))?;
+        Ok(())
     }
 
-    #[cfg(not(unix))]
-    let _ = path;
+    #[cfg(windows)]
+    {
+        tighten_windows_private_file_acl(path)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn tighten_windows_private_file_acl(path: &Path) -> Result<(), String> {
+    let escaped_path = path.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$Path = '{escaped_path}'
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$acl = Get-Acl -LiteralPath $Path
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($rule in @($acl.Access)) {{
+    [void]$acl.RemoveAccessRuleAll($rule)
+}}
+$accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $identity.User,
+    [System.Security.AccessControl.FileSystemRights]::FullControl,
+    [System.Security.AccessControl.AccessControlType]::Allow
+)
+$acl.AddAccessRule($accessRule)
+Set-Acl -LiteralPath $Path -AclObject $acl
+"#
+    );
+
+    let output = new_resolved_command("powershell")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-Command")
+        .arg(script)
+        .output()
+        .map_err(|error| {
+            format!(
+                "调用 PowerShell 设置私有文件权限失败 {}: {error}",
+                path.display()
+            )
+        })?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("退出码 {:?}", output.status.code())
+        };
+        Err(format!(
+            "设置 Windows 私有文件 ACL 失败 {}: {detail}",
+            path.display()
+        ))
+    }
 }
 
 pub(crate) fn prepare_process_path() {
