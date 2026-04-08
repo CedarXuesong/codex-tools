@@ -51,7 +51,7 @@
     "currentStart": "导入当前登录",
     "currentImporting": "导入中...",
     "uploadTab": "上传文件",
-    "uploadDescription": "批量导入 auth.json 文件或目录，适合迁移、备份和批量汇总。",
+    "uploadDescription": "批量导入 auth.json、导出的 accounts.json 文件或目录，适合迁移、备份恢复和批量汇总。",
     "oauthStart": "生成授权链接",
     "uploadChooseFiles": "选择文件",
     "uploadChooseFolder": "选择文件夹",

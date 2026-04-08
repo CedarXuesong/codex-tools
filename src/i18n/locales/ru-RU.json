@@ -51,7 +51,7 @@
     "currentStart": "Import current login",
     "currentImporting": "Importing...",
     "uploadTab": "Загрузка файлов",
-    "uploadDescription": "Batch import auth.json files or folders for migration, backup recovery, or consolidation.",
+    "uploadDescription": "Batch import auth.json files, exported accounts.json backups, or folders for migration, backup recovery, or consolidation.",
     "oauthStart": "Generate authorization link",
     "uploadChooseFiles": "Выбрать файлы",
     "uploadChooseFolder": "Выбрать папку",

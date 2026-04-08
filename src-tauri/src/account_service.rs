@@ -45,6 +45,16 @@ const AUTH_EXPIRED_NOTICE: &str = "授权过期，请重新登录授权。";
 const EXPORT_ARCHIVE_ENTRY_NAME: &str = "accounts.json";
 const KEEPALIVE_REFRESH_WINDOW_SECS: i64 = 10 * 60;
 
+#[derive(Debug, Clone)]
+struct ImportCandidate {
+    source: String,
+    auth_json: serde_json::Value,
+    label: Option<String>,
+    usage: Option<UsageSnapshot>,
+    plan_type: Option<String>,
+    email: Option<String>,
+}
+
 struct PreparedImport {
     principal_id: String,
     auth_json: serde_json::Value,
@@ -100,17 +110,24 @@ pub(crate) async fn import_auth_json_accounts_internal(
 
     for item in items {
         let source = normalize_import_source(&item.source);
-        let auth_json = match parse_auth_json_content(&item.content) {
-            Ok(value) => value,
-            Err(error) => {
-                failures.push(ImportAccountFailure { source, error });
-                continue;
-            }
-        };
+        let candidates =
+            match expand_import_json_content(&item.content, &source, item.label.as_deref()) {
+                Ok(value) => value,
+                Err(error) => {
+                    failures.push(ImportAccountFailure { source, error });
+                    continue;
+                }
+            };
 
-        match prepare_auth_json_import(auth_json, item.label).await {
-            Ok(prepared) => prepared_imports.push(prepared),
-            Err(error) => failures.push(ImportAccountFailure { source, error }),
+        for candidate in candidates {
+            let candidate_source = candidate.source.clone();
+            match prepare_import_candidate(candidate).await {
+                Ok(prepared) => prepared_imports.push(prepared),
+                Err(error) => failures.push(ImportAccountFailure {
+                    source: candidate_source,
+                    error,
+                }),
+            }
         }
     }
 
@@ -685,6 +702,35 @@ async fn prepare_auth_json_import(
     })
 }
 
+async fn prepare_import_candidate(candidate: ImportCandidate) -> Result<PreparedImport, String> {
+    let ImportCandidate {
+        auth_json,
+        label,
+        usage,
+        plan_type,
+        email,
+        ..
+    } = candidate;
+
+    let extracted = extract_auth(&auth_json)?;
+
+    // 用量拉取失败不阻断导入流程；若来自账号库备份，则保留备份内已有快照。
+    let usage = fetch_usage_snapshot(&extracted.access_token, &extracted.account_id)
+        .await
+        .ok()
+        .or(usage);
+
+    Ok(PreparedImport {
+        principal_id: extracted.principal_id,
+        auth_json,
+        account_id: extracted.account_id,
+        email: extracted.email.or(email),
+        plan_type: extracted.plan_type.or(plan_type),
+        usage,
+        label,
+    })
+}
+
 async fn commit_prepared_import(
     app: &AppHandle,
     state: &AppState,
@@ -954,7 +1000,11 @@ fn apply_prepared_import_to_account(
     existing.auth_refresh_error = None;
 }
 
-fn parse_auth_json_content(raw: &str) -> Result<serde_json::Value, String> {
+fn expand_import_json_content(
+    raw: &str,
+    source: &str,
+    label_override: Option<&str>,
+) -> Result<Vec<ImportCandidate>, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("JSON 内容为空".to_string());
@@ -963,7 +1013,155 @@ fn parse_auth_json_content(raw: &str) -> Result<serde_json::Value, String> {
     let normalized = trimmed.strip_prefix('\u{feff}').unwrap_or(trimmed);
     let parsed =
         serde_json::from_str(normalized).map_err(|error| format!("JSON 格式无效: {error}"))?;
-    Ok(normalize_imported_auth_json(parsed))
+    expand_import_value(parsed, source, label_override)
+}
+
+fn expand_import_value(
+    parsed: serde_json::Value,
+    source: &str,
+    label_override: Option<&str>,
+) -> Result<Vec<ImportCandidate>, String> {
+    if looks_like_accounts_store(&parsed) {
+        return expand_accounts_store_import(parsed, source, label_override);
+    }
+
+    if looks_like_stored_account(&parsed) {
+        return import_stored_account_candidates(parsed, source, label_override);
+    }
+
+    if let Some(items) = parsed.as_array() {
+        if items.is_empty() {
+            return Err("JSON 内没有可导入的账号".to_string());
+        }
+
+        let mut expanded = Vec::with_capacity(items.len());
+        for (index, item) in items.iter().cloned().enumerate() {
+            let item_source = format!("{source} / #{}", index + 1);
+            let candidates = if looks_like_stored_account(&item) {
+                import_stored_account_candidates(item, &item_source, label_override)?
+            } else {
+                vec![ImportCandidate {
+                    source: item_source,
+                    auth_json: normalize_imported_auth_json(item),
+                    label: normalize_custom_label(label_override.map(ToString::to_string)),
+                    usage: None,
+                    plan_type: None,
+                    email: None,
+                }]
+            };
+            expanded.extend(candidates);
+        }
+        return Ok(expanded);
+    }
+
+    Ok(vec![ImportCandidate {
+        source: source.to_string(),
+        auth_json: normalize_imported_auth_json(parsed),
+        label: normalize_custom_label(label_override.map(ToString::to_string)),
+        usage: None,
+        plan_type: None,
+        email: None,
+    }])
+}
+
+fn expand_accounts_store_import(
+    parsed: serde_json::Value,
+    source: &str,
+    label_override: Option<&str>,
+) -> Result<Vec<ImportCandidate>, String> {
+    let Some(root) = parsed.as_object() else {
+        return Err("账号库备份格式无效（根节点不是对象）".to_string());
+    };
+    let Some(accounts) = root.get("accounts").and_then(serde_json::Value::as_array) else {
+        return Err("账号库备份缺少 accounts 数组".to_string());
+    };
+    if accounts.is_empty() {
+        return Err("账号库备份里没有可导入的账号".to_string());
+    }
+
+    let mut expanded = Vec::with_capacity(accounts.len());
+    for (index, account) in accounts.iter().cloned().enumerate() {
+        let item_source = format!("{source} / #{}", index + 1);
+        let candidates = import_stored_account_candidates(account, &item_source, label_override)?;
+        expanded.extend(candidates);
+    }
+    Ok(expanded)
+}
+
+fn import_stored_account_candidates(
+    parsed: serde_json::Value,
+    source: &str,
+    label_override: Option<&str>,
+) -> Result<Vec<ImportCandidate>, String> {
+    let Some(root) = parsed.as_object() else {
+        return Err("账号备份格式无效（不是对象）".to_string());
+    };
+
+    let auth_json = root
+        .get("authJson")
+        .or_else(|| root.get("auth_json"))
+        .cloned()
+        .ok_or_else(|| "账号备份缺少 authJson".to_string())?;
+
+    let stored_label = root
+        .get("label")
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string);
+    let email = root
+        .get("email")
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string);
+    let plan_type = root
+        .get("planType")
+        .or_else(|| root.get("plan_type"))
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string);
+    let usage = root
+        .get("usage")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<UsageSnapshot>(value).ok());
+    let account_id = root
+        .get("accountId")
+        .or_else(|| root.get("account_id"))
+        .and_then(serde_json::Value::as_str);
+
+    Ok(vec![ImportCandidate {
+        source: describe_account_backup_source(
+            source,
+            normalize_custom_label(stored_label.clone())
+                .as_deref()
+                .or(email.as_deref())
+                .or(account_id),
+        ),
+        auth_json: normalize_imported_auth_json(auth_json),
+        label: normalize_custom_label(label_override.map(ToString::to_string))
+            .or_else(|| normalize_custom_label(stored_label)),
+        usage,
+        plan_type,
+        email,
+    }])
+}
+
+fn looks_like_accounts_store(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .and_then(|root| root.get("accounts"))
+        .and_then(serde_json::Value::as_array)
+        .is_some()
+}
+
+fn looks_like_stored_account(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .map(|root| root.contains_key("authJson") || root.contains_key("auth_json"))
+        .unwrap_or(false)
+}
+
+fn describe_account_backup_source(source: &str, hint: Option<&str>) -> String {
+    let Some(hint) = hint.map(str::trim).filter(|value| !value.is_empty()) else {
+        return source.to_string();
+    };
+    format!("{source} / {hint}")
 }
 
 fn normalize_custom_label(label: Option<String>) -> Option<String> {
@@ -994,6 +1192,7 @@ fn normalize_import_source(source: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::expand_import_json_content;
     use super::upsert_prepared_import;
     use super::PreparedImport;
     use crate::models::AccountsStore;
@@ -1036,6 +1235,118 @@ mod tests {
             usage: Some(usage_snapshot(plan_type)),
             label: Some(label.to_string()),
         }
+    }
+
+    #[test]
+    fn expand_import_json_content_supports_exported_accounts_store() {
+        let raw = json!({
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "stored-1",
+                    "label": "Alpha",
+                    "email": "alpha@example.com",
+                    "accountId": "account-1",
+                    "planType": "team",
+                    "authJson": {
+                        "auth_mode": "chatgpt",
+                        "tokens": {
+                            "access_token": "access-1",
+                            "id_token": "id-1",
+                            "refresh_token": "refresh-1"
+                        }
+                    },
+                    "addedAt": 1,
+                    "updatedAt": 2,
+                    "usage": {
+                        "fetchedAt": 3,
+                        "planType": "team",
+                        "fiveHour": null,
+                        "oneWeek": null,
+                        "credits": null
+                    },
+                    "usageError": null
+                }
+            ],
+            "settings": {}
+        })
+        .to_string();
+
+        let candidates = expand_import_json_content(&raw, "accounts.json", None).unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].label.as_deref(), Some("Alpha"));
+        assert_eq!(candidates[0].email.as_deref(), Some("alpha@example.com"));
+        assert_eq!(candidates[0].plan_type.as_deref(), Some("team"));
+        assert_eq!(
+            candidates[0]
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.plan_type.as_deref()),
+            Some("team")
+        );
+        assert_eq!(candidates[0].source, "accounts.json / #1 / Alpha");
+        assert_eq!(
+            candidates[0]
+                .auth_json
+                .get("tokens")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|tokens| tokens.get("access_token"))
+                .and_then(serde_json::Value::as_str),
+            Some("access-1")
+        );
+    }
+
+    #[test]
+    fn expand_import_json_content_supports_single_stored_account_backup() {
+        let raw = json!({
+            "id": "stored-1",
+            "label": "Solo",
+            "email": "solo@example.com",
+            "accountId": "account-1",
+            "authJson": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "access-1",
+                    "id_token": "id-1",
+                    "refresh_token": "refresh-1"
+                }
+            },
+            "addedAt": 1,
+            "updatedAt": 2
+        })
+        .to_string();
+
+        let candidates = expand_import_json_content(&raw, "account.json", None).unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].label.as_deref(), Some("Solo"));
+        assert_eq!(candidates[0].source, "account.json / Solo");
+    }
+
+    #[test]
+    fn expand_import_json_content_normalizes_flat_auth_json() {
+        let raw = json!({
+            "auth_mode": "chatgpt",
+            "access_token": "access-1",
+            "id_token": "id-1",
+            "refresh_token": "refresh-1"
+        })
+        .to_string();
+
+        let candidates = expand_import_json_content(&raw, "auth.json", None).unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source, "auth.json");
+        assert_eq!(
+            candidates[0]
+                .auth_json
+                .get("tokens")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|tokens| tokens.get("access_token"))
+                .and_then(serde_json::Value::as_str),
+            Some("access-1")
+        );
     }
 
     #[test]

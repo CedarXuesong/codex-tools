@@ -51,7 +51,7 @@
     "currentStart": "Import current login",
     "currentImporting": "Importing...",
     "uploadTab": "파일 업로드",
-    "uploadDescription": "Batch import auth.json files or folders for migration, backup recovery, or consolidation.",
+    "uploadDescription": "Batch import auth.json files, exported accounts.json backups, or folders for migration, backup recovery, or consolidation.",
     "oauthStart": "Generate authorization link",
     "uploadChooseFiles": "파일 선택",
     "uploadChooseFolder": "폴더 선택",
