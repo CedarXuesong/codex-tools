@@ -22,7 +22,7 @@
 
 5. 在Add or search model文本框中，输入Coding Plan支持的模型中的模型名称，点击Add Custom Model。
 
-6. 添加模型名称为gpt-5-4 （目前只支持这个一个）
+6. 添加模型名称建议使用 `gpt-5.4`；同时兼容 `gpt-5-4` 别名
 
 ### Cursor 接入注意事项
 
