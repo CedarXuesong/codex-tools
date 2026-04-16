@@ -99,6 +99,7 @@ npm run tauri dev
 - 支持固定端口、自定义端口、固定 API Key 和手动刷新 API Key
 - 按账号余量自动挑选可用账号进行转发
 - 可设置应用启动时自动启动 API 反代
+- 可作为 CC Switch 的 Codex 自定义 provider 上游，按 `responses` 协议接入
 
 ### 5. 公网访问与桌面能力
 

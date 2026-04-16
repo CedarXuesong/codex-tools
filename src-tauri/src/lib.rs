@@ -881,17 +881,7 @@ async fn switch_account_and_launch(
     if let Some(path) = cli::find_configured_codex_app_path(configured_codex_launch_path.as_deref())
         .or_else(cli::find_codex_app_path)
     {
-        let mut cmd = Command::new("open");
-        cmd.arg("-na").arg(&path);
-        if let Some(workspace) = workspace_path.as_deref() {
-            cmd.arg(workspace);
-        }
-        let status = cmd
-            .status()
-            .map_err(|e| format!("启动 Codex.app 失败: {e}"))?;
-        if !status.success() {
-            return Err("Codex.app 启动失败".to_string());
-        }
+        launch_codex_app(&path, workspace_path.as_deref())?;
 
         return Ok(SwitchAccountResult {
             account_id: account.account_id,
@@ -912,7 +902,7 @@ async fn switch_account_and_launch(
         cmd.arg(workspace);
     }
     cmd.spawn()
-        .map_err(|e| format!("未检测到 Codex.app，且通过 codex app 启动失败: {e}"))?;
+        .map_err(|e| format!("未检测到本地 Codex 应用，且通过 codex app 启动失败: {e}"))?;
 
     Ok(SwitchAccountResult {
         account_id: account.account_id,
@@ -925,6 +915,53 @@ async fn switch_account_and_launch(
         restarted_editor_apps,
         editor_restart_error,
     })
+}
+
+fn launch_codex_app(path: &std::path::Path, workspace_path: Option<&str>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = Command::new("open");
+        cmd.arg("-na").arg(path);
+        if let Some(workspace) = workspace_path {
+            cmd.arg(workspace);
+        }
+        let status = cmd
+            .status()
+            .map_err(|e| format!("启动 Codex 应用失败: {e}"))?;
+        if !status.success() {
+            return Err("启动 Codex 应用失败".to_string());
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = new_background_command(path);
+        if let Some(workspace) = workspace_path {
+            cmd.arg(workspace);
+        }
+        cmd.spawn()
+            .map_err(|e| format!("启动 Codex 应用失败: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let mut cmd = Command::new(path);
+        if let Some(workspace) = workspace_path {
+            cmd.arg(workspace);
+        }
+        cmd.spawn()
+            .map_err(|e| format!("启动 Codex 应用失败: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        let _ = path;
+        let _ = workspace_path;
+        Err("当前平台暂不支持直接启动 Codex 应用".to_string())
+    }
 }
 
 fn normalize_switch_refresh_error(raw_error: &str) -> String {

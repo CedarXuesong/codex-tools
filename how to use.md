@@ -65,6 +65,15 @@
 
 详细说明可参考 [docs/api-proxy.md](docs/api-proxy.md)。
 
+如果你要通过 CC Switch 管理 Codex provider，也可以直接接本工具的反代：
+
+- 在 CC Switch 的 **Codex 自定义 provider** 中填写本工具显示的 `Base URL`
+- `Base URL` 填到 `/v1` 为止，例如 `http://127.0.0.1:8787/v1`
+- `API Key` 使用本工具生成的代理 `sk-...`
+- `wire_api` 选择 `responses`
+
+更完整的配置示例见 [docs/api-proxy.md](docs/api-proxy.md) 里的“通过 CC Switch 接入 Codex”。
+
 ## 6. 日常使用建议
 
 - 新增账号后先刷新一次用量

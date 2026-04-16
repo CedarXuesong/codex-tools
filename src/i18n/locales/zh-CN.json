@@ -397,7 +397,7 @@
     "accountDeleted": "账号已删除",
     "deleteFailed": "删除失败：{{error}}",
     "switchedOnly": "账号已切换（未自动启动 Codex）。",
-    "switchedAndLaunchByCli": "账号已切换。未找到本地 Codex.app，已尝试通过 codex app 启动。",
+    "switchedAndLaunchByCli": "账号已切换。未检测到本地 Codex 应用，已尝试通过 codex app 启动。",
     "switchedAndLaunching": "账号已切换，正在启动 Codex。",
     "opencodeSyncFailed": "{{base}} Opencode 同步失败：{{error}}",
     "opencodeSynced": "{{base}} 已同步 Opencode OpenAI 认证。",

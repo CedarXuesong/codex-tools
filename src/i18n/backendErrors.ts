@@ -92,13 +92,13 @@ const REPLACEMENTS: PhraseReplacement[] = [
     ),
   },
   {
-    source: "设置的 Codex 启动路径无效。请填写 codex/codex.exe 的完整路径，或填写包含它的安装目录。",
+    source: "设置的 Codex 启动路径无效。请填写 Codex.exe 或 codex/codex.exe 的完整路径，或填写包含它们的安装目录。",
     target: phrases(
-      "设置的 Codex 启动路径无效。请填写 codex/codex.exe 的完整路径，或填写包含它的安装目录。",
-      "The configured Codex launch path is invalid. Enter the full path to codex/codex.exe, or an install directory that contains it.",
-      "設定した Codex 起動パスが無効です。codex/codex.exe のフルパス、またはそれを含むインストールディレクトリを入力してください。",
-      "설정한 Codex 실행 경로가 올바르지 않습니다. codex/codex.exe의 전체 경로나 해당 파일이 들어 있는 설치 디렉터리를 입력하세요.",
-      "Указанный путь запуска Codex недействителен. Введите полный путь к codex/codex.exe или каталог установки, где он находится."
+      "设置的 Codex 启动路径无效。请填写 Codex.exe 或 codex/codex.exe 的完整路径，或填写包含它们的安装目录。",
+      "The configured Codex launch path is invalid. Enter the full path to Codex.exe or codex/codex.exe, or an install directory that contains them.",
+      "設定した Codex 起動パスが無効です。Codex.exe または codex/codex.exe のフルパス、またはそれらを含むインストールディレクトリを入力してください。",
+      "설정한 Codex 실행 경로가 올바르지 않습니다. Codex.exe 또는 codex/codex.exe의 전체 경로나 해당 파일이 들어 있는 설치 디렉터리를 입력하세요.",
+      "Указанный путь запуска Codex недействителен. Введите полный путь к Codex.exe или codex/codex.exe либо каталог установки, где они находятся."
     ),
   },
   {
@@ -422,23 +422,23 @@ const REPLACEMENTS: PhraseReplacement[] = [
     ),
   },
   {
-    source: "启动 Codex.app 失败",
+    source: "启动 Codex 应用失败",
     target: phrases(
-      "启动 Codex.app 失败",
-      "Failed to launch Codex.app",
-      "Codex.app の起動に失敗しました",
-      "Codex.app을 시작하지 못했습니다",
-      "Не удалось запустить Codex.app"
+      "启动 Codex 应用失败",
+      "Failed to launch the Codex app",
+      "Codex アプリの起動に失敗しました",
+      "Codex 앱을 시작하지 못했습니다",
+      "Не удалось запустить приложение Codex"
     ),
   },
   {
-    source: "未检测到 Codex.app，且通过 codex app 启动失败",
+    source: "未检测到本地 Codex 应用，且通过 codex app 启动失败",
     target: phrases(
-      "未检测到 Codex.app，且通过 codex app 启动失败",
-      "Codex.app was not detected, and launching via codex app also failed",
-      "Codex.app が見つからず、codex app 経由の起動にも失敗しました",
-      "Codex.app을 찾지 못했고 codex app으로 시작하는 데도 실패했습니다",
-      "Codex.app не обнаружен, и запуск через codex app тоже завершился неудачно"
+      "未检测到本地 Codex 应用，且通过 codex app 启动失败",
+      "The local Codex app was not detected, and launching via codex app also failed",
+      "ローカルの Codex アプリが見つからず、codex app 経由の起動にも失敗しました",
+      "로컬 Codex 앱을 찾지 못했고 codex app으로 시작하는 데도 실패했습니다",
+      "Локальное приложение Codex не обнаружено, и запуск через codex app тоже завершился неудачно"
     ),
   },
   {

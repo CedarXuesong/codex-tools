@@ -1,4 +1,9 @@
 ## 更新日志
+- v1.7.7
+  1. 修复 Cursor / Codex 插件接入时 `prompt_cache_retention` 参数导致的上游报错
+  2. 修复 Windows 下已设置 Codex 启动路径仍无法拉起的问题
+  3. 增加微软应用商店安装目录与 WindowsApps 路径探测
+  4. 补充 CC Switch 通过 `responses` 协议接入 Codex 反代的文档
 - v1.7.6
   1. 兼容官方 Codex 插件使用 `gpt-5.4` 模型名
   2. 保持兼容 `gpt-5-4` 历史别名

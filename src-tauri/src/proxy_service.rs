@@ -81,6 +81,7 @@ const MODELS: &[&str] = &[
 const REQUEST_MODEL_MAPPINGS: &[(&str, &str)] = &[("gpt5.4", "gpt-5.4"), ("gpt-5-4", "gpt-5.4")];
 const RESPONSE_MODEL_NORMALIZATIONS: &[(&str, &str)] =
     &[("gpt5.4", "gpt-5.4"), ("gpt-5-4", "gpt-5.4")];
+const UNSUPPORTED_RESPONSES_REQUEST_FIELDS: &[&str] = &["metadata", "prompt_cache_retention"];
 
 #[derive(Clone)]
 pub(crate) struct ProxyStorageContext {
@@ -867,8 +868,10 @@ fn normalize_openai_responses_request(mut request: Value) -> Result<(Value, bool
         }
     }
 
-    // Cursor may attach OpenAI-compatible metadata, but Codex upstream rejects it.
-    object.remove("metadata");
+    // Cursor may attach OpenAI-compatible fields that Codex upstream rejects.
+    for key in UNSUPPORTED_RESPONSES_REQUEST_FIELDS {
+        object.remove(*key);
+    }
 
     Ok((request, downstream_stream))
 }
@@ -2864,12 +2867,15 @@ mod tests {
     }
 
     #[test]
-    fn strips_metadata_from_responses_style_requests() {
+    fn strips_unsupported_fields_from_responses_style_requests() {
         let request = json!({
             "model": "gpt-5-4",
             "input": "hello",
             "metadata": {
                 "ide": "cursor"
+            },
+            "prompt_cache_retention": {
+                "scope": "tool_call"
             }
         });
 
@@ -2877,6 +2883,7 @@ mod tests {
             normalize_openai_responses_request(request).expect("request should normalize");
 
         assert!(payload.get("metadata").is_none());
+        assert!(payload.get("prompt_cache_retention").is_none());
     }
 
     #[test]

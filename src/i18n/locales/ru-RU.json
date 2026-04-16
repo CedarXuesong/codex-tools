@@ -397,7 +397,7 @@
     "accountDeleted": "Аккаунт удален",
     "deleteFailed": "Ошибка удаления: {{error}}",
     "switchedOnly": "Аккаунт переключен (Codex не запускался автоматически).",
-    "switchedAndLaunchByCli": "Аккаунт переключен. Локально не найден Codex.app, выполнена попытка запуска через `codex app`.",
+    "switchedAndLaunchByCli": "Аккаунт переключен. Локальное приложение Codex не найдено, выполнена попытка запуска через `codex app`.",
     "switchedAndLaunching": "Аккаунт переключен. Запускаем Codex.",
     "opencodeSyncFailed": "{{base}} Ошибка синхронизации Opencode: {{error}}",
     "opencodeSynced": "{{base}} Синхронизация Opencode OpenAI auth выполнена.",
