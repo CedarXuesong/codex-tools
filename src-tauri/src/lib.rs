@@ -878,22 +878,33 @@ async fn switch_account_and_launch(
     // 切换时强制结束旧实例，避免触发“是否退出”确认弹窗。
     force_stop_running_codex();
 
+    let mut app_launch_error = None;
     if let Some(path) = cli::find_configured_codex_app_path(configured_codex_launch_path.as_deref())
         .or_else(cli::find_codex_app_path)
     {
-        launch_codex_app(&path, workspace_path.as_deref())?;
-
-        return Ok(SwitchAccountResult {
-            account_id: account.account_id,
-            launched_app_path: Some(path.to_string_lossy().to_string()),
-            used_fallback_cli: false,
-            opencode_synced,
-            opencode_sync_error,
-            opencode_desktop_restarted,
-            opencode_desktop_restart_error,
-            restarted_editor_apps,
-            editor_restart_error,
-        });
+        match launch_codex_app(&path, workspace_path.as_deref()) {
+            Ok(()) => {
+                return Ok(SwitchAccountResult {
+                    account_id: account.account_id,
+                    launched_app_path: Some(path.to_string_lossy().to_string()),
+                    used_fallback_cli: false,
+                    opencode_synced,
+                    opencode_sync_error,
+                    opencode_desktop_restarted,
+                    opencode_desktop_restart_error,
+                    restarted_editor_apps,
+                    editor_restart_error,
+                });
+            }
+            Err(error) => {
+                log::warn!(
+                    "通过 Codex 应用路径启动失败 {}: {}",
+                    path.display(),
+                    error
+                );
+                app_launch_error = Some(error);
+            }
+        }
     }
 
     let mut cmd = cli::new_codex_command(configured_codex_launch_path.as_deref())?;
@@ -902,7 +913,15 @@ async fn switch_account_and_launch(
         cmd.arg(workspace);
     }
     cmd.spawn()
-        .map_err(|e| format!("未检测到本地 Codex 应用，且通过 codex app 启动失败: {e}"))?;
+        .map_err(|e| {
+            if let Some(app_launch_error) = app_launch_error.as_ref() {
+                format!(
+                    "通过 Codex 应用路径启动失败: {app_launch_error}；且通过 codex app 启动失败: {e}"
+                )
+            } else {
+                format!("未检测到本地 Codex 应用，且通过 codex app 启动失败: {e}")
+            }
+        })?;
 
     Ok(SwitchAccountResult {
         account_id: account.account_id,
@@ -936,6 +955,11 @@ fn launch_codex_app(path: &std::path::Path, workspace_path: Option<&str>) -> Res
 
     #[cfg(target_os = "windows")]
     {
+        if cli::is_windows_store_codex_path(path) {
+            let _ = workspace_path;
+            return cli::launch_windows_store_codex();
+        }
+
         let mut cmd = new_background_command(path);
         if let Some(workspace) = workspace_path {
             cmd.arg(workspace);
