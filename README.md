@@ -6,7 +6,7 @@
 - 本地 `/v1` 反代
 - cloudflared 公网访问
 
-仓库地址：<https://github.com/Barbital11111/codex-tools>
+仓库地址：<https://github.com/170-carry/codex-tools>
 
 ## 更新日志
 [更新日志](changelog.md)
@@ -62,19 +62,13 @@
 npm install
 ```
 
-### 3) 启动桌面应用（推荐隔离预览）
+### 3) 启动桌面应用
 
 ```bash
-npm run dev:desktop
+npm run tauri dev
 ```
 
-该命令会把开发预览使用的数据隔离到仓库内 `.dev-runtime/`，避免本地调试时覆盖正式安装版保存的账号、profile 与 `~/.codex` 配置。
-
-如果你只想看浏览器页面，也可以使用：
-
-```bash
-npm run dev
-```
+就这三步。
 
 ## 主要功能
 
@@ -127,8 +121,8 @@ git push origin v0.1.3
 ```
 
 查看：
-- 代码仓库: <https://github.com/Barbital11111/codex-tools>
-- 版本发布: <https://github.com/Barbital11111/codex-tools/releases>
+- 代码仓库: <https://github.com/170-carry/codex-tools>
+- 版本发布: <https://github.com/170-carry/codex-tools/releases>
 
 ## 目录说明
 
@@ -138,11 +132,11 @@ git push origin v0.1.3
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=Barbital11111/codex-tools&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=170-carry/codex-tools&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=Barbital11111/codex-tools&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=Barbital11111/codex-tools&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=Barbital11111/codex-tools&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=170-carry/codex-tools&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=170-carry/codex-tools&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=170-carry/codex-tools&type=date&legend=top-left" />
  </picture>
 </a>
 

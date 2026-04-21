@@ -1,26 +1,4 @@
 ## 更新日志
-- v1.8.2
-  1. 新增“智能切换包含 API（当账号登录无足够限额时）”设置，默认关闭；开启后仅在普通账号余量已明确耗尽时才回退到 API 条目
-  2. 修复 API 卡片长接口/模型名溢出问题，并移除重复显示的“重新授权”按钮
-  3. 增加隔离开发预览链路：`npm run dev:desktop` 会使用 `.dev-runtime` 中的副本数据启动 Tauri dev，不污染正式安装版账号与 `~/.codex` 配置
-- v1.8.1
-  1. 回退实验性 NVAPI 导入预设与协议检测入口，导入 API 恢复为 OpenAI 兼容 `/responses` 校验
-  2. 移除 `nvapi-...` API Key、接口类型、协议字段与 API 卡片类型/协议显示
-  3. 将项目仓库、Issue、Release 与更新检测地址切换到 `Barbital11111/codex-tools`
-- v1.8.0
-  1. 新增“导入 API”入口，可保存 OpenAI 兼容 Base URL、API Key 与模型名称
-  2. API 条目保存前会进行真实接口检测；检测失败时可查看错误并选择“仍然保存”
-  3. 每个普通账号与 API 条目均支持独立 `auth.json` 与 `config.toml` profile，用于切换时覆盖到 `~/.codex/`
-  4. 启动时扫描账号 profile 完整性，缺失时只提示“配置不完整”，不会删除或重置旧账号数据
-  5. API 卡片改为显示接口、模型与可选余额，不再显示 ChatGPT 用量圆环
-- v1.7.8
-  1. 基于上游 `v1.7.7`（截至 2026-04-18 的 `upstream/main`）补齐 Windows 下微软商店版 Codex 的启动链路修复
-  2. 修复微软商店版 Codex 启动误命中 `Codex Tools` 自身 AUMID 的问题，改为更严格识别 `OpenAI.Codex` 目标
-  3. 微软商店版改为优先通过 AUMID 调用系统激活接口，并在返回前校验 Codex 进程已真正拉起；当应用路径启动失败时，再回退到 `codex app`
-  4. 自动清理设置中残留的版本化 `WindowsApps\\OpenAI.Codex_<version>...` 路径；即使本地拿不到稳定 exe 路径，也会优先按 AUMID 直启，而不是误提示缺少 Codex CLI
-  5. 新增“重新授权账号”入口，可用新的 OAuth 登录态原位替换旧 `authJson`，无需先删除账号再重登
-  6. 重新授权时会校验新旧账号身份一致，并同步更新 `accountId`、`planType` 与 usage 快照，修复旧账号长期显示 `free` 的问题
-  7. 未选择任何编辑器重启目标时不再额外报错，避免干扰切号后的启动提示
 - v1.7.7
   1. 修复 Cursor / Codex 插件接入时 `prompt_cache_retention` 参数导致的上游报错
   2. 修复 Windows 下已设置 Codex 启动路径仍无法拉起的问题
