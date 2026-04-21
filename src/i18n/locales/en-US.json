@@ -314,6 +314,11 @@
       "checkedText": "Launch",
       "uncheckedText": "Switch only"
     },
+    "smartSwitchIncludeApi": {
+      "label": "Include API in smart switch (when signed-in accounts run out of quota)",
+      "checkedText": "On",
+      "uncheckedText": "Off"
+    },
     "codexLaunchPath": {
       "label": "Specify Codex launch path"
     },

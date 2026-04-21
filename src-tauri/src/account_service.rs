@@ -7,10 +7,10 @@ use std::path::PathBuf;
 
 use rfd::FileDialog;
 use tauri::AppHandle;
-use tauri::Manager;
 use zip::write::FileOptions;
 use zip::CompressionMethod;
 
+use crate::app_paths;
 use crate::auth::account_group_key;
 use crate::auth::account_variant_key;
 use crate::auth::auth_tokens_expire_within;
@@ -162,11 +162,7 @@ pub(crate) async fn create_api_account_internal(
             auth_refresh_error: None,
         };
         profile_files::sync_account_profile_in_store_path(
-            &account_store_path_from_data_dir(
-                &app.path()
-                    .app_data_dir()
-                    .map_err(|error| format!("无法获取应用数据目录: {error}"))?,
-            ),
+            &account_store_path_from_data_dir(&app_paths::app_data_dir(app)?),
             &mut stored,
         )?;
 
@@ -198,11 +194,7 @@ pub(crate) async fn reauthorize_account_internal(
 
     validate_reauthorization_target(existing, &prepared)?;
     apply_reauthorized_account(existing, prepared);
-    let store_path = account_store_path_from_data_dir(
-        &app.path()
-            .app_data_dir()
-            .map_err(|error| format!("无法获取应用数据目录: {error}"))?,
-    );
+    let store_path = account_store_path_from_data_dir(&app_paths::app_data_dir(app)?);
     profile_files::sync_account_profile_in_store_path(&store_path, existing)?;
     dedupe_account_variants(&mut store.accounts);
     save_store(app, &store)?;
@@ -268,11 +260,7 @@ pub(crate) async fn import_auth_json_accounts_internal(
         let mut imported_count = 0usize;
         let mut updated_count = 0usize;
         let mut touched_ids = HashSet::new();
-        let store_path = account_store_path_from_data_dir(
-            &app.path()
-                .app_data_dir()
-                .map_err(|error| format!("无法获取应用数据目录: {error}"))?,
-        );
+        let store_path = account_store_path_from_data_dir(&app_paths::app_data_dir(app)?);
 
         for prepared in prepared_imports {
             let (summary, updated_existing) = upsert_prepared_import(
@@ -758,10 +746,7 @@ async fn persist_account_refresh_state(
     auth_refresh_error: Option<&str>,
 ) -> Result<(), String> {
     let _guard = state.store_lock.lock().await;
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+    let data_dir = app_paths::app_data_dir(app)?;
     let store_path = account_store_path_from_data_dir(&data_dir);
     update_account_group_refresh_state_in_path(
         &store_path,
@@ -899,11 +884,7 @@ async fn commit_prepared_import(
             current_account_key.as_deref(),
             current_variant_key.as_deref(),
         );
-        let store_path = account_store_path_from_data_dir(
-            &app.path()
-                .app_data_dir()
-                .map_err(|error| format!("无法获取应用数据目录: {error}"))?,
-        );
+        let store_path = account_store_path_from_data_dir(&app_paths::app_data_dir(app)?);
         if let Some(account) = store.accounts.iter_mut().find(|account| account.id == summary.id) {
             profile_files::sync_account_profile_in_store_path(&store_path, account)?;
         }
@@ -1623,11 +1604,23 @@ mod tests {
         store.accounts.push(StoredAccount {
             id: "existing".to_string(),
             label: "placeholder".to_string(),
+            source_kind: Default::default(),
             principal_id: Some("fresh@example.com".to_string()),
             email: Some("fresh@example.com".to_string()),
             account_id: "account-1".to_string(),
             plan_type: None,
             auth_json: json!({ "kind": "old" }),
+            api_base_url: None,
+            api_key: None,
+            model_name: None,
+            balance_text: None,
+            profile_auth_path: None,
+            profile_config_path: None,
+            profile_auth_ready: false,
+            profile_config_ready: false,
+            profile_integrity_error: None,
+            profile_last_validated_at: None,
+            profile_last_validation_error: None,
             added_at: 1,
             updated_at: 1,
             usage: None,

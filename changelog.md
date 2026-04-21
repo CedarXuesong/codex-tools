@@ -1,4 +1,12 @@
 ## 更新日志
+- v1.8.2
+  1. 新增“智能切换包含 API（当账号登录无足够限额时）”设置，默认关闭；开启后仅在普通账号余量已明确耗尽时才回退到 API 条目
+  2. 修复 API 卡片长接口/模型名溢出问题，并移除重复显示的“重新授权”按钮
+  3. 增加隔离开发预览链路：`npm run dev:desktop` 会使用 `.dev-runtime` 中的副本数据启动 Tauri dev，不污染正式安装版账号与 `~/.codex` 配置
+- v1.8.1
+  1. 回退实验性 NVAPI 导入预设与协议检测入口，导入 API 恢复为 OpenAI 兼容 `/responses` 校验
+  2. 移除 `nvapi-...` API Key、接口类型、协议字段与 API 卡片类型/协议显示
+  3. 将项目仓库、Issue、Release 与更新检测地址切换到 `Barbital11111/codex-tools`
 - v1.8.0
   1. 新增“导入 API”入口，可保存 OpenAI 兼容 Base URL、API Key 与模型名称
   2. API 条目保存前会进行真实接口检测；检测失败时可查看错误并选择“仍然保存”

@@ -314,6 +314,11 @@
       "checkedText": "起動",
       "uncheckedText": "切替のみ"
     },
+    "smartSwitchIncludeApi": {
+      "label": "スマート切替に API を含める（ログイン済みアカウントの残量不足時）",
+      "checkedText": "オン",
+      "uncheckedText": "オフ"
+    },
     "codexLaunchPath": {
       "label": "Codex 起動パスを指定"
     },

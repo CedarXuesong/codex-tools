@@ -314,6 +314,11 @@
       "checkedText": "启动",
       "uncheckedText": "仅切换"
     },
+    "smartSwitchIncludeApi": {
+      "label": "智能切换包含 API（当账号登录无足够限额时）",
+      "checkedText": "开启",
+      "uncheckedText": "关闭"
+    },
     "codexLaunchPath": {
       "label": "指定codex启动路径"
     },

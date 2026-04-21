@@ -369,15 +369,6 @@ export function AccountCard({
           ) : null}
           <button
             type="button"
-            className="cardReauthorizeIcon"
-            onClick={() => onReauthorize(selectedAccount)}
-            aria-label={copy.accountCard.reauthorize}
-            title={copy.accountCard.reauthorize}
-          >
-            <ReauthorizeIcon />
-          </button>
-          <button
-            type="button"
             className="cardEditIcon"
             onClick={handleStartAliasEdit}
             disabled={isEditingAlias || isRenaming}

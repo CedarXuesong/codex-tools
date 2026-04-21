@@ -314,6 +314,11 @@
       "checkedText": "실행",
       "uncheckedText": "전환만"
     },
+    "smartSwitchIncludeApi": {
+      "label": "스마트 전환에 API 포함 (로그인 계정의 잔여 한도가 부족할 때)",
+      "checkedText": "켜짐",
+      "uncheckedText": "꺼짐"
+    },
     "codexLaunchPath": {
       "label": "Codex 실행 경로 지정"
     },

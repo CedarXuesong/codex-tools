@@ -1,4 +1,5 @@
 mod account_service;
+mod app_paths;
 mod auth;
 mod cli;
 mod cloudflared_service;
@@ -797,7 +798,7 @@ async fn switch_account_and_launch(
 
                 if should_block_refresh {
                     let blocked_message = "授权过期，请重新登录授权。";
-                    match app.path().app_data_dir() {
+                    match app_paths::app_data_dir(&app) {
                         Ok(data_dir) => {
                             let store_path = store::account_store_path_from_data_dir(&data_dir);
                             if let Err(persist_error) =
@@ -862,9 +863,7 @@ async fn switch_account_and_launch(
             .ok_or_else(|| "找不到要切换的账号".to_string())?;
         profile_files::sync_account_profile_in_store_path(
             &store::account_store_path_from_data_dir(
-                &app.path()
-                    .app_data_dir()
-                    .map_err(|error| format!("无法获取应用数据目录: {error}"))?,
+                &app_paths::app_data_dir(&app)?,
             ),
             stored_account,
         )?;

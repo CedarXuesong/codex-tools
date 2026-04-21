@@ -28,7 +28,7 @@ import type {
   SwitchAccountResult,
   UpdateSettingsOptions,
 } from "../types/app";
-import { pickBestRemainingAccount, sortAccountsByRemaining } from "../utils/accountRanking";
+import { pickBestSmartSwitchAccount, sortAccountsByRemaining } from "../utils/accountRanking";
 
 const REFRESH_MS = 30_000;
 const EDITOR_SCAN_MS = 60_000;
@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchAtStartup: false,
   trayUsageDisplayMode: "remaining",
   launchCodexAfterSwitch: true,
+  smartSwitchIncludeApi: false,
   codexLaunchPath: null,
   syncOpencodeOpenaiAuth: false,
   restartOpencodeDesktopOnSwitch: false,
@@ -1604,7 +1605,10 @@ export function useCodexController() {
       return;
     }
 
-    const target = pickBestRemainingAccount(sortedAccounts);
+    const target = pickBestSmartSwitchAccount(
+      sortedAccounts,
+      settings.smartSwitchIncludeApi,
+    );
     if (!target) {
       setNotice({ type: "info", message: copy.notices.smartSwitchNoTarget });
       return;
@@ -1618,7 +1622,7 @@ export function useCodexController() {
     }
 
     await onSwitch(target);
-  }, [copy.notices, onSwitch, sortedAccounts, switchingId]);
+  }, [copy.notices, onSwitch, settings.smartSwitchIncludeApi, sortedAccounts, switchingId]);
 
   const onUpdateRemoteServers = useCallback(
     async (remoteServers: RemoteServerConfig[]) => {

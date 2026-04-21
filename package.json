@@ -1,19 +1,20 @@
 {
   "name": "codex-tools",
   "private": true,
-  "version": "1.8.0",
+  "version": "1.8.2",
   "license": "MIT",
-  "homepage": "https://github.com/170-carry/codex-tools",
+  "homepage": "https://github.com/Barbital11111/codex-tools",
   "bugs": {
-    "url": "https://github.com/170-carry/codex-tools/issues"
+    "url": "https://github.com/Barbital11111/codex-tools/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/170-carry/codex-tools.git"
+    "url": "https://github.com/Barbital11111/codex-tools.git"
   },
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:desktop": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-preview.ps1",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",

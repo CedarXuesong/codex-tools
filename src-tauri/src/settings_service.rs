@@ -50,6 +50,9 @@ pub(crate) async fn update_app_settings_internal(
         if let Some(value) = patch.launch_codex_after_switch {
             store.settings.launch_codex_after_switch = value;
         }
+        if let Some(value) = patch.smart_switch_include_api {
+            store.settings.smart_switch_include_api = value;
+        }
         if let Some(value) = patch.codex_launch_path {
             store.settings.codex_launch_path = normalize_codex_launch_path_for_storage(value)?;
         }

@@ -314,6 +314,11 @@
       "checkedText": "Запуск",
       "uncheckedText": "Только переключение"
     },
+    "smartSwitchIncludeApi": {
+      "label": "Включать API в умное переключение (когда у аккаунтов входа не хватает квоты)",
+      "checkedText": "Вкл",
+      "uncheckedText": "Выкл"
+    },
     "codexLaunchPath": {
       "label": "Указать путь запуска Codex"
     },

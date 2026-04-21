@@ -7,9 +7,8 @@ use uuid::Uuid;
 
 #[cfg(feature = "desktop")]
 use tauri::AppHandle;
-#[cfg(feature = "desktop")]
-use tauri::Manager;
 
+use crate::app_paths;
 use crate::auth::account_variant_key;
 use crate::auth::current_auth_account_key;
 use crate::auth::extract_auth;
@@ -233,10 +232,7 @@ pub(crate) fn update_account_group_refresh_state_in_path(
 
 #[cfg(feature = "desktop")]
 fn account_store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("无法获取应用数据目录: {e}"))?;
+    let dir = app_paths::app_data_dir(app)?;
     Ok(account_store_path_from_data_dir(&dir))
 }
 
@@ -574,11 +570,23 @@ mod tests {
             accounts: vec![StoredAccount {
                 id: format!("id-{label}"),
                 label: label.to_string(),
+                source_kind: Default::default(),
                 principal_id: Some(format!("{label}@example.com")),
                 email: Some(format!("{label}@example.com")),
                 account_id: account_id.to_string(),
                 plan_type: Some("team".to_string()),
                 auth_json: json!({ "kind": label }),
+                api_base_url: None,
+                api_key: None,
+                model_name: None,
+                balance_text: None,
+                profile_auth_path: None,
+                profile_config_path: None,
+                profile_auth_ready: false,
+                profile_config_ready: false,
+                profile_integrity_error: None,
+                profile_last_validated_at: None,
+                profile_last_validation_error: None,
                 added_at: updated_at - 1,
                 updated_at,
                 usage: None,
@@ -653,11 +661,23 @@ mod tests {
             accounts: vec![StoredAccount {
                 id: "legacy".to_string(),
                 label: "legacy".to_string(),
+                source_kind: Default::default(),
                 principal_id: None,
                 email: Some("legacy@example.com".to_string()),
                 account_id: "workspace-1".to_string(),
                 plan_type: Some("team".to_string()),
                 auth_json: json!({ "kind": "legacy" }),
+                api_base_url: None,
+                api_key: None,
+                model_name: None,
+                balance_text: None,
+                profile_auth_path: None,
+                profile_config_path: None,
+                profile_auth_ready: false,
+                profile_config_ready: false,
+                profile_integrity_error: None,
+                profile_last_validated_at: None,
+                profile_last_validation_error: None,
                 added_at: 1,
                 updated_at: 1,
                 usage: None,

@@ -325,6 +325,11 @@ export type MessageCatalog = {
       checkedText: string;
       uncheckedText: string;
     };
+    smartSwitchIncludeApi: {
+      label: string;
+      checkedText: string;
+      uncheckedText: string;
+    };
     codexLaunchPath: {
       label: string;
     };

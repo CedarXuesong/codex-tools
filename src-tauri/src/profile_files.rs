@@ -10,6 +10,7 @@ use toml_edit::value;
 use toml_edit::DocumentMut;
 use uuid::Uuid;
 
+use crate::app_paths;
 use crate::auth;
 use crate::models::AccountSourceKind;
 use crate::models::StoredAccount;
@@ -356,8 +357,7 @@ fn read_current_codex_config_optional() -> Result<Option<String>, String> {
 }
 
 fn current_codex_config_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| "无法读取 HOME 目录".to_string())?;
-    Ok(home.join(".codex").join("config.toml"))
+    app_paths::codex_config_path()
 }
 
 fn truncate_message(message: &str) -> String {
