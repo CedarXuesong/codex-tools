@@ -1728,9 +1728,18 @@ async fn persist_candidate_refresh_state(
 fn should_suspend_proxy_refresh(raw_error: &str) -> bool {
     let normalized = raw_error.to_ascii_lowercase();
     normalized.contains("refresh_token_reused")
+        || is_invalid_refresh_grant(&normalized)
         || normalized.contains("provided authentication token is expired")
         || normalized
             .contains("your refresh token has already been used to generate a new access token")
+        || normalized.contains("refresh token expired")
+        || normalized.contains("refresh_token expired")
+        || normalized.contains("expired refresh token")
+        || normalized.contains("refresh token is expired")
+        || normalized.contains("refresh token revoked")
+        || normalized.contains("refresh_token_revoked")
+        || normalized.contains("refresh token invalid")
+        || normalized.contains("invalid refresh token")
         || normalized.contains("please try signing in again")
         || normalized.contains("token is expired")
         || normalized.contains("account has been deactivated")
@@ -1745,15 +1754,32 @@ fn normalize_proxy_refresh_error(raw_error: &str) -> String {
         return "账号被封禁，请检查邮箱".to_string();
     }
     if normalized.contains("refresh_token_reused")
+        || is_invalid_refresh_grant(&normalized)
         || normalized.contains("provided authentication token is expired")
         || normalized
             .contains("your refresh token has already been used to generate a new access token")
+        || normalized.contains("refresh token expired")
+        || normalized.contains("refresh_token expired")
+        || normalized.contains("expired refresh token")
+        || normalized.contains("refresh token is expired")
+        || normalized.contains("refresh token revoked")
+        || normalized.contains("refresh_token_revoked")
+        || normalized.contains("refresh token invalid")
+        || normalized.contains("invalid refresh token")
         || normalized.contains("please try signing in again")
         || normalized.contains("token is expired")
     {
         return "授权过期，请重新登录授权。".to_string();
     }
     raw_error.to_string()
+}
+
+fn is_invalid_refresh_grant(normalized_error: &str) -> bool {
+    normalized_error.contains("invalid_grant")
+        && (normalized_error.contains("refresh")
+            || normalized_error.contains("expired")
+            || normalized_error.contains("revoked")
+            || normalized_error.contains("invalid"))
 }
 
 fn should_retry_with_token_refresh(status: StatusCode, body: &Bytes) -> bool {

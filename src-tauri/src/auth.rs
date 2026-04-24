@@ -438,6 +438,33 @@ pub(crate) fn auth_tokens_need_refresh(auth_json: &Value) -> bool {
     auth_tokens_expire_within(auth_json, 60)
 }
 
+pub(crate) fn auth_tokens_need_keepalive_refresh(
+    auth_json: &Value,
+    token_lead_time_secs: i64,
+    max_last_refresh_age_secs: i64,
+) -> bool {
+    if auth_tokens_expire_within(auth_json, token_lead_time_secs) {
+        return true;
+    }
+
+    if max_last_refresh_age_secs <= 0 || auth_token_object(auth_json).is_none() {
+        return false;
+    }
+
+    let Some(root) = auth_json.as_object() else {
+        return false;
+    };
+    let Some(last_refresh) = root.get("last_refresh").and_then(last_refresh_unix_seconds) else {
+        return true;
+    };
+    let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs() as i64,
+        Err(_) => return false,
+    };
+
+    now.saturating_sub(last_refresh) >= max_last_refresh_age_secs
+}
+
 /// 使用 auth.json 内的 refresh_token 刷新 ChatGPT OAuth 令牌。
 ///
 /// 返回更新后的 auth.json（仅内存对象，不会自动写盘）。
@@ -662,6 +689,31 @@ fn normalize_last_refresh_value(value: &Value) -> Option<String> {
     }
 }
 
+fn last_refresh_unix_seconds(value: &Value) -> Option<i64> {
+    match value {
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if let Ok(datetime) = OffsetDateTime::parse(trimmed, &Rfc3339) {
+                return Some(datetime.unix_timestamp());
+            }
+            trimmed.parse::<i64>().ok().map(timestamp_value_to_secs)
+        }
+        Value::Number(number) => number.as_i64().map(timestamp_value_to_secs),
+        _ => None,
+    }
+}
+
+fn timestamp_value_to_secs(timestamp: i64) -> i64 {
+    if timestamp.abs() >= 1_000_000_000_000 {
+        timestamp / 1_000
+    } else {
+        timestamp
+    }
+}
+
 fn unix_timestamp_to_rfc3339(timestamp: i64) -> Option<String> {
     let datetime = if timestamp.abs() >= 1_000_000_000_000 {
         OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp) * 1_000_000).ok()?
@@ -865,6 +917,44 @@ mod tests {
         });
 
         assert!(!auth_tokens_need_refresh(&auth_json));
+    }
+
+    #[test]
+    fn keepalive_refreshes_when_last_refresh_is_stale() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("current time should be available")
+            .as_secs() as i64;
+        let auth_json = json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": now - 3600,
+            "tokens": {
+                "access_token": jwt_with_exp(now + 7200),
+                "id_token": jwt_with_exp(now + 7200),
+                "refresh_token": "refresh-token"
+            }
+        });
+
+        assert!(auth_tokens_need_keepalive_refresh(&auth_json, 60, 1800));
+    }
+
+    #[test]
+    fn keepalive_skips_when_last_refresh_is_fresh() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("current time should be available")
+            .as_secs() as i64;
+        let auth_json = json!({
+            "auth_mode": "chatgpt",
+            "last_refresh": now,
+            "tokens": {
+                "access_token": jwt_with_exp(now + 7200),
+                "id_token": jwt_with_exp(now + 7200),
+                "refresh_token": "refresh-token"
+            }
+        });
+
+        assert!(!auth_tokens_need_keepalive_refresh(&auth_json, 60, 1800));
     }
 
     #[test]

@@ -1071,8 +1071,17 @@ fn launch_codex_app(path: &std::path::Path, workspace_path: Option<&str>) -> Res
 fn normalize_switch_refresh_error(raw_error: &str) -> String {
     let normalized = raw_error.to_ascii_lowercase();
     if normalized.contains("refresh_token_reused")
+        || is_invalid_refresh_grant(&normalized)
         || normalized
             .contains("your refresh token has already been used to generate a new access token")
+        || normalized.contains("refresh token expired")
+        || normalized.contains("refresh_token expired")
+        || normalized.contains("expired refresh token")
+        || normalized.contains("refresh token is expired")
+        || normalized.contains("refresh token revoked")
+        || normalized.contains("refresh_token_revoked")
+        || normalized.contains("refresh token invalid")
+        || normalized.contains("invalid refresh token")
     {
         return "当前账号的 refresh_token 已失效或已被轮换，请重新登录授权。".to_string();
     }
@@ -1083,6 +1092,14 @@ fn normalize_switch_refresh_error(raw_error: &str) -> String {
         return "当前账号授权已过期，请重新登录授权。".to_string();
     }
     raw_error.to_string()
+}
+
+fn is_invalid_refresh_grant(normalized_error: &str) -> bool {
+    normalized_error.contains("invalid_grant")
+        && (normalized_error.contains("refresh")
+            || normalized_error.contains("expired")
+            || normalized_error.contains("revoked")
+            || normalized_error.contains("invalid"))
 }
 
 #[tauri::command]

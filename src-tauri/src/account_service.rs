@@ -13,7 +13,7 @@ use zip::CompressionMethod;
 use crate::app_paths;
 use crate::auth::account_group_key;
 use crate::auth::account_variant_key;
-use crate::auth::auth_tokens_expire_within;
+use crate::auth::auth_tokens_need_keepalive_refresh;
 use crate::auth::current_auth_account_key;
 use crate::auth::current_auth_variant_key;
 use crate::auth::extract_auth;
@@ -48,6 +48,7 @@ const DEACTIVATED_ACCOUNT_NOTICE: &str = "账号被封禁，请检查邮箱";
 const AUTH_EXPIRED_NOTICE: &str = "授权过期，请重新登录授权。";
 const EXPORT_ARCHIVE_ENTRY_NAME: &str = "accounts.json";
 const KEEPALIVE_REFRESH_WINDOW_SECS: i64 = 10 * 60;
+const KEEPALIVE_MAX_LAST_REFRESH_AGE_SECS: i64 = 6 * 60 * 60;
 
 #[derive(Debug, Clone)]
 struct ImportCandidate {
@@ -587,7 +588,11 @@ async fn refresh_usage_for_target(
 
     if force_auth_refresh
         && !auth_refresh_blocked
-        && auth_tokens_expire_within(&working_auth_json, KEEPALIVE_REFRESH_WINDOW_SECS)
+        && auth_tokens_need_keepalive_refresh(
+            &working_auth_json,
+            KEEPALIVE_REFRESH_WINDOW_SECS,
+            KEEPALIVE_MAX_LAST_REFRESH_AGE_SECS,
+        )
     {
         match refresh_chatgpt_auth_tokens_serialized(&working_auth_json, &state.auth_refresh_lock)
             .await
@@ -778,9 +783,18 @@ fn should_retry_with_token_refresh(
 fn should_suspend_auth_keepalive(raw_error: &str) -> bool {
     let normalized = raw_error.to_ascii_lowercase();
     normalized.contains("refresh_token_reused")
+        || is_invalid_refresh_grant(&normalized)
         || normalized.contains("provided authentication token is expired")
         || normalized
             .contains("your refresh token has already been used to generate a new access token")
+        || normalized.contains("refresh token expired")
+        || normalized.contains("refresh_token expired")
+        || normalized.contains("expired refresh token")
+        || normalized.contains("refresh token is expired")
+        || normalized.contains("refresh token revoked")
+        || normalized.contains("refresh_token_revoked")
+        || normalized.contains("refresh token invalid")
+        || normalized.contains("invalid refresh token")
         || normalized.contains("please try signing in again")
         || normalized.contains("token is expired")
         || normalized.contains("deactivated_workspace")
@@ -805,9 +819,18 @@ fn normalize_usage_error_message(raw_error: &str) -> String {
         return DEACTIVATED_ACCOUNT_NOTICE.to_string();
     }
     if normalized.contains("refresh_token_reused")
+        || is_invalid_refresh_grant(&normalized)
         || normalized.contains("provided authentication token is expired")
         || normalized
             .contains("your refresh token has already been used to generate a new access token")
+        || normalized.contains("refresh token expired")
+        || normalized.contains("refresh_token expired")
+        || normalized.contains("expired refresh token")
+        || normalized.contains("refresh token is expired")
+        || normalized.contains("refresh token revoked")
+        || normalized.contains("refresh_token_revoked")
+        || normalized.contains("refresh token invalid")
+        || normalized.contains("invalid refresh token")
         || normalized.contains("please try signing in again")
         || normalized.contains("token is expired")
         || normalized.contains("auth.json 缺少 refresh_token")
@@ -815,6 +838,14 @@ fn normalize_usage_error_message(raw_error: &str) -> String {
         return AUTH_EXPIRED_NOTICE.to_string();
     }
     raw_error.to_string()
+}
+
+fn is_invalid_refresh_grant(normalized_error: &str) -> bool {
+    normalized_error.contains("invalid_grant")
+        && (normalized_error.contains("refresh")
+            || normalized_error.contains("expired")
+            || normalized_error.contains("revoked")
+            || normalized_error.contains("invalid"))
 }
 
 async fn prepare_auth_json_import(
@@ -1441,9 +1472,12 @@ fn normalize_import_source(source: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::normalize_usage_error_message;
+    use super::should_suspend_auth_keepalive;
     use super::expand_import_json_content;
     use super::upsert_prepared_import;
     use super::PreparedImport;
+    use super::AUTH_EXPIRED_NOTICE;
     use crate::models::AccountsStore;
     use crate::models::StoredAccount;
     use crate::models::UsageSnapshot;
@@ -1713,5 +1747,21 @@ mod tests {
             store.accounts[0].variant_key(),
             store.accounts[1].variant_key()
         );
+    }
+
+    #[test]
+    fn refresh_failures_suspend_keepalive_for_invalid_grant_refresh_token() {
+        let error = r#"刷新登录令牌失败 https://auth.openai.com/oauth/token -> 400 Bad Request: {"error":"invalid_grant","error_description":"Refresh token expired"}"#;
+
+        assert!(should_suspend_auth_keepalive(error));
+        assert_eq!(normalize_usage_error_message(error), AUTH_EXPIRED_NOTICE);
+    }
+
+    #[test]
+    fn refresh_failures_suspend_keepalive_for_revoked_refresh_token() {
+        let error = "invalid refresh token: refresh token revoked";
+
+        assert!(should_suspend_auth_keepalive(error));
+        assert_eq!(normalize_usage_error_message(error), AUTH_EXPIRED_NOTICE);
     }
 }
