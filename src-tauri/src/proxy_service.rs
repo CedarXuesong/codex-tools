@@ -21,6 +21,7 @@ use axum::extract::ws::Message as AxumWebSocketMessage;
 use axum::extract::ws::WebSocket as AxumWebSocket;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::DefaultBodyLimit;
+use axum::extract::Multipart;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::Method;
@@ -87,6 +88,9 @@ const CODEX_CLIENT_VERSION: &str = "0.125.0";
 const CODEX_USER_AGENT: &str = "codex_cli_rs/0.125.0";
 const RESPONSES_WEBSOCKETS_BETA: &str = "responses_websockets=2026-02-06";
 const SSE_DONE: &str = "data: [DONE]\n\n";
+const DEFAULT_IMAGE_CONTROLLER_MODEL: &str = "gpt-5.5";
+const DEFAULT_IMAGE_TOOL_MODEL: &str = "gpt-image-2";
+const IMAGE_VARIATION_PROMPT: &str = "Create a faithful variation of the provided image.";
 const MODELS: &[&str] = &[
     "gpt-5",
     "gpt-5.5",
@@ -100,6 +104,11 @@ const MODELS: &[&str] = &[
     "gpt-5.2-codex",
     "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
+    "gpt-image-2",
+    "gpt-image-1.5",
+    "gpt-image-1",
+    "gpt-image-1-mini",
+    "chatgpt-image-latest",
 ];
 const REQUEST_MODEL_MAPPINGS: &[(&str, &str)] = &[
     ("gpt5.5", "gpt-5.5"),
@@ -415,6 +424,9 @@ pub(crate) async fn start_api_proxy_with_runtime(
         .route("/health", get(health_handler))
         .route("/v1/models", get(models_handler))
         .route("/v1/chat/completions", post(chat_completions_handler))
+        .route("/v1/images/generations", post(image_generations_handler))
+        .route("/v1/images/edits", post(image_edits_handler))
+        .route("/v1/images/variations", post(image_variations_handler))
         .route(
             "/v1/responses",
             post(responses_handler).get(responses_websocket_handler),
@@ -676,6 +688,171 @@ async fn responses_handler(
     }
 }
 
+async fn image_generations_handler(
+    State(context): State<Arc<ProxyContext>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response<Body> {
+    if let Some(response) = ensure_authorized(&headers, &context.api_key) {
+        return response;
+    }
+
+    let request_json = match parse_json_request(&body) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+
+    let image_request = match convert_openai_image_generation_request_to_codex(&request_json) {
+        Ok(value) => value,
+        Err(message) => return invalid_request_response(&message),
+    };
+
+    forward_image_request(context, headers, image_request).await
+}
+
+async fn image_edits_handler(
+    State(context): State<Arc<ProxyContext>>,
+    headers: HeaderMap,
+    multipart: Multipart,
+) -> Response<Body> {
+    if let Some(response) = ensure_authorized(&headers, &context.api_key) {
+        return response;
+    }
+
+    let request = match parse_image_multipart_request(multipart).await {
+        Ok(value) => value,
+        Err(message) => return invalid_request_response(&message),
+    };
+    let image_request = match convert_openai_image_edit_request_to_codex(&request, false) {
+        Ok(value) => value,
+        Err(message) => return invalid_request_response(&message),
+    };
+
+    forward_image_request(context, headers, image_request).await
+}
+
+async fn image_variations_handler(
+    State(context): State<Arc<ProxyContext>>,
+    headers: HeaderMap,
+    multipart: Multipart,
+) -> Response<Body> {
+    if let Some(response) = ensure_authorized(&headers, &context.api_key) {
+        return response;
+    }
+
+    let request = match parse_image_multipart_request(multipart).await {
+        Ok(value) => value,
+        Err(message) => return invalid_request_response(&message),
+    };
+    let image_request = match convert_openai_image_edit_request_to_codex(&request, true) {
+        Ok(value) => value,
+        Err(message) => return invalid_request_response(&message),
+    };
+
+    forward_image_request(context, headers, image_request).await
+}
+
+async fn forward_image_request(
+    context: Arc<ProxyContext>,
+    headers: HeaderMap,
+    image_request: ConvertedImageRequest,
+) -> Response<Body> {
+    let ConvertedImageRequest {
+        upstream_payload,
+        downstream_stream,
+        image_count,
+    } = image_request;
+
+    let upstream =
+        match send_codex_request_over_candidates(&context, &headers, &upstream_payload).await {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+
+    let (candidate, upstream_response) = upstream;
+    update_proxy_target(&context, &candidate).await;
+    update_proxy_error(&context, None).await;
+
+    if downstream_stream {
+        build_image_streaming_response(upstream_response)
+    } else {
+        let mut upstream_headers = HeaderMap::new();
+        let mut created = now_unix_seconds();
+        let mut data = Vec::new();
+        let mut first_upstream_response = Some(upstream_response);
+
+        for index in 0..image_count {
+            let upstream_response = if index == 0 {
+                first_upstream_response
+                    .take()
+                    .expect("first image upstream response should be present")
+            } else {
+                let upstream =
+                    match send_codex_request_over_candidates(&context, &headers, &upstream_payload)
+                        .await
+                    {
+                        Ok(value) => value,
+                        Err(response) => return response,
+                    };
+                let (candidate, upstream_response) = upstream;
+                update_proxy_target(&context, &candidate).await;
+                update_proxy_error(&context, None).await;
+                upstream_response
+            };
+
+            let (headers, upstream_body) = match upstream_response.into_bytes().await {
+                Ok(value) => value,
+                Err(error) => {
+                    let message = format!("读取 Codex 上游响应失败: {error}");
+                    update_proxy_error(&context, Some(message.clone())).await;
+                    return json_error_response(StatusCode::BAD_GATEWAY, &message);
+                }
+            };
+            upstream_headers = headers;
+
+            let completed = match extract_completed_response_from_sse(&upstream_body) {
+                Ok(value) => value,
+                Err(message) => {
+                    update_proxy_error(&context, Some(message.clone())).await;
+                    return json_error_response(StatusCode::BAD_GATEWAY, &message);
+                }
+            };
+            let converted = match convert_responses_image_output_to_images_response(&completed) {
+                Ok(value) => value,
+                Err(message) => {
+                    update_proxy_error(&context, Some(message.clone())).await;
+                    return json_error_response(StatusCode::BAD_GATEWAY, &message);
+                }
+            };
+            if index == 0 {
+                created = converted
+                    .get("created")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(created);
+            }
+            if let Some(items) = converted.get("data").and_then(Value::as_array) {
+                data.extend(items.iter().cloned());
+            }
+        }
+
+        let body = match serde_json::to_vec(&json!({
+            "created": created,
+            "data": data,
+        }))
+        .map(Bytes::from)
+        .map_err(|error| format!("序列化图片响应失败: {error}"))
+        {
+            Ok(value) => value,
+            Err(message) => {
+                update_proxy_error(&context, Some(message.clone())).await;
+                return json_error_response(StatusCode::BAD_GATEWAY, &message);
+            }
+        };
+
+        build_json_proxy_response(StatusCode::OK, &upstream_headers, body)
+    }
+}
+
 async fn responses_websocket_handler(
     State(context): State<Arc<ProxyContext>>,
     headers: HeaderMap,
@@ -880,7 +1057,7 @@ async fn unsupported_proxy_handler(
     json_error_response(
         StatusCode::NOT_FOUND,
         &format!(
-            "当前反代只支持 GET /v1/models、POST /v1/chat/completions、POST /v1/responses，收到的是 {method} {}",
+            "当前反代只支持 GET /v1/models、POST /v1/chat/completions、POST /v1/responses、POST /v1/images/generations、POST /v1/images/edits、POST /v1/images/variations，收到的是 {method} {}",
             uri.path()
         ),
     )
@@ -1174,6 +1351,367 @@ fn normalize_openai_responses_request(mut request: Value) -> Result<(Value, bool
     }
 
     Ok((request, downstream_stream))
+}
+
+#[derive(Default)]
+struct ImageMultipartRequest {
+    fields: Map<String, Value>,
+    images: Vec<Value>,
+    mask: Option<Value>,
+}
+
+#[derive(Debug)]
+struct ConvertedImageRequest {
+    upstream_payload: Value,
+    downstream_stream: bool,
+    image_count: usize,
+}
+
+async fn parse_image_multipart_request(
+    mut multipart: Multipart,
+) -> Result<ImageMultipartRequest, String> {
+    let mut request = ImageMultipartRequest::default();
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| format!("读取 multipart 字段失败: {error}"))?
+    {
+        let name = field.name().map(ToString::to_string).unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        let file_name = field.file_name().map(ToString::to_string);
+        let content_type = field.content_type().map(ToString::to_string);
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|error| format!("读取 multipart 字段 {name} 失败: {error}"))?;
+
+        match name.as_str() {
+            "image" | "image[]" | "images[]" => {
+                request.images.push(multipart_image_part(
+                    &bytes,
+                    content_type.as_deref(),
+                    file_name.as_deref(),
+                ));
+            }
+            "mask" => {
+                request.mask = Some(multipart_image_part(
+                    &bytes,
+                    content_type.as_deref(),
+                    file_name.as_deref(),
+                ));
+            }
+            _ => {
+                let value = String::from_utf8(bytes.to_vec())
+                    .map_err(|_| format!("multipart 字段 {name} 必须是 UTF-8 文本"))?;
+                insert_multipart_text_field(&mut request.fields, &name, value);
+            }
+        }
+    }
+
+    Ok(request)
+}
+
+fn multipart_image_part(
+    bytes: &Bytes,
+    content_type: Option<&str>,
+    _file_name: Option<&str>,
+) -> Value {
+    let mime_type = content_type
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| guess_image_mime_type(bytes));
+    let mut part = Map::new();
+    part.insert("type".to_string(), Value::String("input_image".to_string()));
+    part.insert(
+        "image_url".to_string(),
+        Value::String(format!(
+            "data:{mime_type};base64,{}",
+            BASE64_STANDARD.encode(bytes)
+        )),
+    );
+    Value::Object(part)
+}
+
+fn guess_image_mime_type(bytes: &[u8]) -> &str {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        "image/jpeg"
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        "image/webp"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+fn insert_multipart_text_field(fields: &mut Map<String, Value>, name: &str, value: String) {
+    if name.ends_with("[]") {
+        let key = name.trim_end_matches("[]").to_string();
+        fields
+            .entry(key)
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .map(|items| items.push(Value::String(value)));
+    } else {
+        fields.insert(name.to_string(), Value::String(value));
+    }
+}
+
+fn convert_openai_image_generation_request_to_codex(
+    request: &Value,
+) -> Result<ConvertedImageRequest, String> {
+    let object = request
+        .as_object()
+        .ok_or_else(|| "图片生成请求必须是 JSON 对象".to_string())?;
+    let prompt = required_string(object, "prompt")?;
+    convert_image_request_parts_to_codex(object, &prompt, Vec::new(), None, false)
+}
+
+fn convert_openai_image_edit_request_to_codex(
+    request: &ImageMultipartRequest,
+    variation: bool,
+) -> Result<ConvertedImageRequest, String> {
+    if request.images.is_empty() {
+        return Err("图片编辑请求缺少 image 文件".to_string());
+    }
+    let prompt = if variation {
+        IMAGE_VARIATION_PROMPT.to_string()
+    } else {
+        required_string(&request.fields, "prompt")?
+    };
+    convert_image_request_parts_to_codex(
+        &request.fields,
+        &prompt,
+        request.images.clone(),
+        request.mask.clone(),
+        true,
+    )
+}
+
+fn convert_image_request_parts_to_codex(
+    object: &Map<String, Value>,
+    prompt: &str,
+    images: Vec<Value>,
+    mask: Option<Value>,
+    edit_action: bool,
+) -> Result<ConvertedImageRequest, String> {
+    if object
+        .get("response_format")
+        .and_then(Value::as_str)
+        .map(|value| value == "url")
+        .unwrap_or(false)
+    {
+        return Err("Codex 账号图片反代只支持 response_format=b64_json".to_string());
+    }
+
+    let tool_model = object
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or(DEFAULT_IMAGE_TOOL_MODEL);
+    if !is_supported_image_model(tool_model) {
+        return Err(format!("不支持的图片模型: {tool_model}"));
+    }
+    let downstream_stream = bool_field(object, "stream", false);
+    let image_count = image_count_field(object)?;
+    if downstream_stream && image_count > 1 {
+        return Err("stream:true 暂只支持 n=1；请改用非流式请求生成多张图片".to_string());
+    }
+
+    let mut content = vec![json!({
+        "type": "input_text",
+        "text": prompt,
+    })];
+    content.extend(images);
+    if let Some(mask) = mask {
+        content.push(json!({
+            "type": "input_text",
+            "text": "Use the following image as the edit mask for the preceding image. Treat the light/white area as the region to edit and keep the dark/black area unchanged.",
+        }));
+        content.push(mask_as_input_image(mask));
+    }
+
+    let mut tool = Map::new();
+    tool.insert(
+        "type".to_string(),
+        Value::String("image_generation".to_string()),
+    );
+    tool.insert("model".to_string(), Value::String(tool_model.to_string()));
+    tool.insert(
+        "action".to_string(),
+        Value::String(if edit_action { "edit" } else { "generate" }.to_string()),
+    );
+    copy_image_tool_string_field(object, &mut tool, "size", "size");
+    copy_image_tool_string_field(object, &mut tool, "quality", "quality");
+    copy_image_tool_string_field(object, &mut tool, "background", "background");
+    copy_image_tool_string_field(object, &mut tool, "output_format", "output_format");
+    copy_image_tool_number_field(
+        object,
+        &mut tool,
+        "output_compression",
+        "output_compression",
+    );
+    copy_image_tool_number_field(object, &mut tool, "compression", "output_compression");
+    copy_image_tool_number_field(object, &mut tool, "partial_images", "partial_images");
+    copy_image_tool_string_field(object, &mut tool, "input_fidelity", "input_fidelity");
+
+    let payload = json!({
+        "model": DEFAULT_IMAGE_CONTROLLER_MODEL,
+        "stream": true,
+        "store": false,
+        "instructions": "",
+        "parallel_tool_calls": true,
+        "reasoning": {
+            "effort": "medium",
+            "summary": "auto"
+        },
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": content,
+        }],
+        "tools": [Value::Object(tool)],
+        "tool_choice": {
+            "type": "image_generation"
+        }
+    });
+
+    Ok(ConvertedImageRequest {
+        upstream_payload: payload,
+        downstream_stream,
+        image_count,
+    })
+}
+
+fn is_supported_image_model(model: &str) -> bool {
+    matches!(
+        model,
+        "gpt-image-2"
+            | "gpt-image-1.5"
+            | "gpt-image-1"
+            | "gpt-image-1-mini"
+            | "chatgpt-image-latest"
+    )
+}
+
+fn bool_field(object: &Map<String, Value>, key: &str, default: bool) -> bool {
+    match object.get(key) {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => true,
+            "false" | "0" => false,
+            _ => default,
+        },
+        _ => default,
+    }
+}
+
+fn image_count_field(object: &Map<String, Value>) -> Result<usize, String> {
+    let Some(value) = object.get("n") else {
+        return Ok(1);
+    };
+    let count =
+        integer_field_value(value).ok_or_else(|| "图片请求参数 n 必须是正整数".to_string())?;
+    if !(1..=10).contains(&count) {
+        return Err("图片请求参数 n 必须在 1 到 10 之间".to_string());
+    }
+    usize::try_from(count).map_err(|_| "图片请求参数 n 超出范围".to_string())
+}
+
+fn integer_field_value(value: &Value) -> Option<i64> {
+    if let Some(value) = value.as_i64() {
+        Some(value)
+    } else if let Some(value) = value.as_u64() {
+        i64::try_from(value).ok()
+    } else if let Some(value) = value.as_str() {
+        value.trim().parse::<i64>().ok()
+    } else {
+        None
+    }
+}
+
+fn copy_image_tool_string_field(
+    source: &Map<String, Value>,
+    target: &mut Map<String, Value>,
+    source_key: &str,
+    target_key: &str,
+) {
+    if let Some(value) = source
+        .get(source_key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        target.insert(target_key.to_string(), Value::String(value.to_string()));
+    }
+}
+
+fn copy_image_tool_number_field(
+    source: &Map<String, Value>,
+    target: &mut Map<String, Value>,
+    source_key: &str,
+    target_key: &str,
+) {
+    if let Some(value) = source.get(source_key).and_then(integer_field_value) {
+        target.insert(
+            target_key.to_string(),
+            Value::Number(serde_json::Number::from(value)),
+        );
+    }
+}
+
+fn mask_as_input_image(mut mask: Value) -> Value {
+    if let Some(object) = mask.as_object_mut() {
+        object.insert("type".to_string(), Value::String("input_image".to_string()));
+    }
+    mask
+}
+
+fn convert_responses_image_output_to_images_response(response: &Value) -> Result<Value, String> {
+    let mut data = Vec::new();
+    collect_images_from_response_value(response, &mut data);
+    if data.is_empty() {
+        return Err("Codex 图片响应中没有 image_generation_call.result".to_string());
+    }
+
+    Ok(json!({
+        "created": response
+            .get("created_at")
+            .and_then(Value::as_i64)
+            .unwrap_or_else(now_unix_seconds),
+        "data": data,
+    }))
+}
+
+fn collect_images_from_response_value(value: &Value, data: &mut Vec<Value>) {
+    match value {
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("image_generation_call") {
+                if let Some(result) = object.get("result").and_then(Value::as_str) {
+                    if !result.is_empty() {
+                        let mut item = Map::new();
+                        item.insert("b64_json".to_string(), Value::String(result.to_string()));
+                        if let Some(prompt) = object.get("revised_prompt").and_then(Value::as_str) {
+                            item.insert(
+                                "revised_prompt".to_string(),
+                                Value::String(prompt.to_string()),
+                            );
+                        }
+                        data.push(Value::Object(item));
+                    }
+                }
+            }
+            for value in object.values() {
+                collect_images_from_response_value(value, data);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_images_from_response_value(item, data);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn map_client_model_to_upstream(model: &str) -> Result<String, String> {
@@ -2824,6 +3362,105 @@ fn build_chat_streaming_response(upstream: CodexUpstreamResponse) -> Response<Bo
         .unwrap_or_else(|_| json_error_response(StatusCode::BAD_GATEWAY, "构建聊天流式响应失败"))
 }
 
+fn build_image_streaming_response(upstream: CodexUpstreamResponse) -> Response<Body> {
+    let (upstream_headers, mut upstream_stream) = upstream.into_stream();
+    let output = stream! {
+        let mut decoder = SseDecoder::default();
+        let mut emitted_final_image = false;
+
+        while let Some(chunk) = upstream_stream.next().await {
+            match chunk {
+                Ok(chunk) => {
+                    for event in decoder.push(&chunk) {
+                        for value in translate_sse_event_to_image_chunk(&event, &mut emitted_final_image) {
+                            yield Ok::<Bytes, Infallible>(sse_data_chunk(&value));
+                        }
+                    }
+                }
+                Err(error) => {
+                    yield Ok::<Bytes, Infallible>(sse_data_chunk(&json!({
+                        "error": {
+                            "message": format!("上游图片流式响应中断: {error}")
+                        }
+                    })));
+                    yield Ok::<Bytes, Infallible>(Bytes::from_static(SSE_DONE.as_bytes()));
+                    return;
+                }
+            }
+        }
+
+        for event in decoder.finish() {
+            for value in translate_sse_event_to_image_chunk(&event, &mut emitted_final_image) {
+                yield Ok::<Bytes, Infallible>(sse_data_chunk(&value));
+            }
+        }
+
+        yield Ok::<Bytes, Infallible>(Bytes::from_static(SSE_DONE.as_bytes()));
+    };
+
+    let mut response = Response::builder().status(StatusCode::OK);
+    for (name, value) in &upstream_headers {
+        if should_forward_response_header(name.as_str()) {
+            response = response.header(name, value);
+        }
+    }
+
+    response
+        .header("content-type", "text/event-stream; charset=utf-8")
+        .header("cache-control", "no-cache")
+        .body(Body::from_stream(output))
+        .unwrap_or_else(|_| json_error_response(StatusCode::BAD_GATEWAY, "构建图片流式响应失败"))
+}
+
+fn translate_sse_event_to_image_chunk(
+    event: &SseEvent,
+    emitted_final_image: &mut bool,
+) -> Vec<Value> {
+    let Ok(value) = serde_json::from_str::<Value>(&event.data) else {
+        return Vec::new();
+    };
+    match value.get("type").and_then(Value::as_str) {
+        Some("response.image_generation_call.partial_image") => {
+            let Some(partial) = value.get("partial_image_b64").and_then(Value::as_str) else {
+                return Vec::new();
+            };
+            vec![json!({
+                "type": "image_generation.partial_image",
+                "b64_json": partial,
+            })]
+        }
+        Some("response.output_item.done") => {
+            image_completed_chunk(value.get("item"), emitted_final_image)
+        }
+        Some("response.completed") => {
+            image_completed_chunk(value.get("response"), emitted_final_image)
+        }
+        Some("response.failed") => vec![json!({
+            "error": {
+                "message": response_error_message_from_value(&value)
+                    .unwrap_or_else(|| "图片生成失败".to_string())
+            }
+        })],
+        _ => Vec::new(),
+    }
+}
+
+fn image_completed_chunk(value: Option<&Value>, emitted_final_image: &mut bool) -> Vec<Value> {
+    if *emitted_final_image {
+        return Vec::new();
+    }
+    let Some(image) =
+        value.and_then(|value| convert_responses_image_output_to_images_response(value).ok())
+    else {
+        return Vec::new();
+    };
+    *emitted_final_image = true;
+    vec![json!({
+        "type": "image_generation.completed",
+        "image": image,
+    })]
+}
+
 fn sse_data_chunk(value: &Value) -> Bytes {
     let serialized = serde_json::to_string(value).unwrap_or_else(|_| {
         "{\"error\":{\"message\":\"stream serialization failed\"}}".to_string()
@@ -2881,10 +3518,13 @@ fn extract_completed_response_from_sse(bytes: &[u8]) -> Result<Value, String> {
     let mut decoder = SseDecoder::default();
     let mut first_error = None::<String>;
     let mut output_text = String::new();
+    let mut output_items = Vec::new();
     for event in decoder.push(bytes) {
         if let Ok(parsed) = serde_json::from_str::<Value>(&event.data) {
             collect_output_text_delta(&parsed, &mut output_text);
+            collect_completed_output_item(&parsed, &mut output_items);
             if let Some(response) = response_completed_from_value(&parsed) {
+                let response = ensure_completed_response_output_items(response, &output_items);
                 return Ok(ensure_completed_response_output(response, &output_text));
             }
             if first_error.is_none() {
@@ -2895,7 +3535,9 @@ fn extract_completed_response_from_sse(bytes: &[u8]) -> Result<Value, String> {
     for event in decoder.finish() {
         if let Ok(parsed) = serde_json::from_str::<Value>(&event.data) {
             collect_output_text_delta(&parsed, &mut output_text);
+            collect_completed_output_item(&parsed, &mut output_items);
             if let Some(response) = response_completed_from_value(&parsed) {
+                let response = ensure_completed_response_output_items(response, &output_items);
                 return Ok(ensure_completed_response_output(response, &output_text));
             }
             if first_error.is_none() {
@@ -2926,6 +3568,16 @@ fn collect_output_text_delta(value: &Value, output_text: &mut String) {
     }
 }
 
+fn collect_completed_output_item(value: &Value, output_items: &mut Vec<Value>) {
+    if value.get("type").and_then(Value::as_str) != Some("response.output_item.done") {
+        return;
+    }
+    let Some(item) = value.get("item").cloned() else {
+        return;
+    };
+    output_items.push(item);
+}
+
 fn ensure_completed_response_output(mut response: Value, output_text: &str) -> Value {
     if output_text.is_empty() || response_has_text_output(&response) {
         return response;
@@ -2944,6 +3596,17 @@ fn ensure_completed_response_output(mut response: Value, output_text: &str) -> V
                 }]
             })]),
         );
+    }
+    response
+}
+
+fn ensure_completed_response_output_items(mut response: Value, output_items: &[Value]) -> Value {
+    if output_items.is_empty() || !response_output_is_empty(&response) {
+        return response;
+    }
+
+    if let Some(object) = response.as_object_mut() {
+        object.insert("output".to_string(), Value::Array(output_items.to_vec()));
     }
     response
 }
@@ -2970,6 +3633,14 @@ fn response_has_text_output(response: &Value) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+fn response_output_is_empty(response: &Value) -> bool {
+    response
+        .get("output")
+        .and_then(Value::as_array)
+        .map(|items| items.is_empty())
+        .unwrap_or(true)
 }
 
 fn response_error_message_from_value(value: &Value) -> Option<String> {
@@ -3605,6 +4276,9 @@ fn parse_proxy_request_body_limit_mib(value: Option<&str>) -> Option<usize> {
 mod tests {
     use super::convert_completed_response_to_chat_completion;
     use super::convert_openai_chat_request_to_codex;
+    use super::convert_openai_image_edit_request_to_codex;
+    use super::convert_openai_image_generation_request_to_codex;
+    use super::convert_responses_image_output_to_images_response;
     use super::extract_completed_response_from_sse;
     use super::find_http_header_end;
     use super::host_matches_no_proxy;
@@ -3618,8 +4292,10 @@ mod tests {
     use super::rewrite_sse_event_data_models_for_client;
     use super::should_use_responses_websocket;
     use super::translate_sse_event_to_chat_chunk;
+    use super::translate_sse_event_to_image_chunk;
     use super::websocket_target_host_port;
     use super::ChatStreamState;
+    use super::ImageMultipartRequest;
     use super::SseEvent;
     use super::DEFAULT_PROXY_REQUEST_BODY_LIMIT_BYTES;
     use serde_json::json;
@@ -3902,6 +4578,304 @@ mod tests {
         };
 
         assert!(is_responses_terminal_event(&event));
+    }
+
+    #[test]
+    fn converts_image_generation_request_to_responses_image_tool_payload() {
+        let request = json!({
+            "model": "gpt-image-2",
+            "prompt": "Draw a tiny red square icon.",
+            "size": "1024x1024",
+            "quality": "low",
+            "output_format": "png",
+            "stream": true,
+            "partial_images": 1
+        });
+
+        let converted = convert_openai_image_generation_request_to_codex(&request)
+            .expect("image generation request should convert");
+        let payload = converted.upstream_payload;
+
+        assert!(converted.downstream_stream);
+        assert_eq!(converted.image_count, 1);
+        assert_eq!(
+            payload.get("model").and_then(Value::as_str),
+            Some("gpt-5.5")
+        );
+        assert_eq!(payload.get("stream").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            payload
+                .get("input")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("content"))
+                .and_then(Value::as_array)
+                .and_then(|parts| parts.first())
+                .and_then(|part| part.get("text"))
+                .and_then(Value::as_str),
+            Some("Draw a tiny red square icon.")
+        );
+        assert_eq!(
+            payload
+                .get("tools")
+                .and_then(Value::as_array)
+                .and_then(|tools| tools.first())
+                .and_then(|tool| tool.get("type"))
+                .and_then(Value::as_str),
+            Some("image_generation")
+        );
+        assert_eq!(
+            payload
+                .get("tools")
+                .and_then(Value::as_array)
+                .and_then(|tools| tools.first())
+                .and_then(|tool| tool.get("model"))
+                .and_then(Value::as_str),
+            Some("gpt-image-2")
+        );
+    }
+
+    #[test]
+    fn rejects_image_generation_url_response_format() {
+        let request = json!({
+            "model": "gpt-image-2",
+            "prompt": "Draw a tiny red square icon.",
+            "response_format": "url"
+        });
+
+        let error = convert_openai_image_generation_request_to_codex(&request)
+            .expect_err("url response format should be rejected");
+
+        assert!(error.contains("b64_json"));
+    }
+
+    #[test]
+    fn converts_image_n_to_downstream_repeat_count_not_upstream_tool_field() {
+        let request = json!({
+            "model": "gpt-image-2",
+            "prompt": "Draw tiny icons.",
+            "n": 2
+        });
+
+        let converted = convert_openai_image_generation_request_to_codex(&request)
+            .expect("image generation request should convert");
+        let tool = converted
+            .upstream_payload
+            .get("tools")
+            .and_then(Value::as_array)
+            .and_then(|tools| tools.first())
+            .expect("image_generation tool");
+
+        assert_eq!(converted.image_count, 2);
+        assert!(tool.get("n").is_none());
+    }
+
+    #[test]
+    fn converts_completed_image_generation_output_to_images_response() {
+        let response = json!({
+            "created_at": 1777445179i64,
+            "output": [
+                {
+                    "type": "image_generation_call",
+                    "status": "completed",
+                    "revised_prompt": "A tiny red square icon.",
+                    "result": "iVBORw0KGgo="
+                }
+            ]
+        });
+
+        let converted = convert_responses_image_output_to_images_response(&response)
+            .expect("image output should convert");
+
+        assert_eq!(
+            converted.get("created").and_then(Value::as_i64),
+            Some(1777445179)
+        );
+        assert_eq!(
+            converted
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("b64_json"))
+                .and_then(Value::as_str),
+            Some("iVBORw0KGgo=")
+        );
+        assert_eq!(
+            converted
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("revised_prompt"))
+                .and_then(Value::as_str),
+            Some("A tiny red square icon.")
+        );
+    }
+
+    #[test]
+    fn extracts_image_generation_output_item_from_sse_when_completed_output_is_empty() {
+        let body = format!(
+            "event: response.output_item.done\ndata: {}\n\nevent: response.completed\ndata: {}\n\n",
+            json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "image_generation_call",
+                    "status": "completed",
+                    "result": "iVBORw0KGgo="
+                }
+            }),
+            json!({
+                "type": "response.completed",
+                "response": {
+                    "created_at": 1777445179i64,
+                    "output": []
+                }
+            })
+        );
+
+        let completed = extract_completed_response_from_sse(body.as_bytes())
+            .expect("response.completed should be extracted");
+        let converted = convert_responses_image_output_to_images_response(&completed)
+            .expect("image output should convert");
+
+        assert_eq!(
+            converted
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("b64_json"))
+                .and_then(Value::as_str),
+            Some("iVBORw0KGgo=")
+        );
+    }
+
+    #[test]
+    fn converts_image_edit_request_with_input_image_and_mask() {
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            "prompt".to_string(),
+            Value::String("Make this icon blue".to_string()),
+        );
+        fields.insert(
+            "model".to_string(),
+            Value::String("gpt-image-2".to_string()),
+        );
+        fields.insert("stream".to_string(), Value::String("true".to_string()));
+        fields.insert("partial_images".to_string(), Value::String("1".to_string()));
+        let request = ImageMultipartRequest {
+            fields,
+            images: vec![json!({
+                "type": "input_image",
+                "image_url": "data:image/png;base64,AAAA"
+            })],
+            mask: Some(json!({
+                "type": "input_image",
+                "image_url": "data:image/png;base64,BBBB"
+            })),
+        };
+
+        let converted = convert_openai_image_edit_request_to_codex(&request, false)
+            .expect("image edit should convert");
+        let payload = converted.upstream_payload;
+
+        assert!(converted.downstream_stream);
+        assert_eq!(
+            payload
+                .get("tools")
+                .and_then(Value::as_array)
+                .and_then(|tools| tools.first())
+                .and_then(|tool| tool.get("action"))
+                .and_then(Value::as_str),
+            Some("edit")
+        );
+        assert_eq!(
+            payload
+                .get("tools")
+                .and_then(Value::as_array)
+                .and_then(|tools| tools.first())
+                .and_then(|tool| tool.get("partial_images"))
+                .and_then(Value::as_i64),
+            Some(1)
+        );
+        let content = payload
+            .get("input")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("content"))
+            .and_then(Value::as_array)
+            .expect("content parts");
+        assert!(content
+            .iter()
+            .any(|part| { part.get("type").and_then(Value::as_str) == Some("input_image") }));
+        assert!(content.iter().any(|part| part
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|text| text.contains("edit mask"))
+            .unwrap_or(false)));
+        assert_eq!(
+            content
+                .iter()
+                .filter(|part| { part.get("type").and_then(Value::as_str) == Some("input_image") })
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn converts_image_variation_request_to_edit_action_with_default_prompt() {
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            "model".to_string(),
+            Value::String("gpt-image-2".to_string()),
+        );
+        let request = ImageMultipartRequest {
+            fields,
+            images: vec![json!({
+                "type": "input_image",
+                "image_url": "data:image/png;base64,AAAA"
+            })],
+            mask: None,
+        };
+
+        let converted = convert_openai_image_edit_request_to_codex(&request, true)
+            .expect("image variation should convert");
+        let payload = converted.upstream_payload;
+
+        assert_eq!(
+            payload
+                .get("input")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("content"))
+                .and_then(Value::as_array)
+                .and_then(|parts| parts.first())
+                .and_then(|part| part.get("text"))
+                .and_then(Value::as_str),
+            Some(super::IMAGE_VARIATION_PROMPT)
+        );
+    }
+
+    #[test]
+    fn translates_partial_image_sse_event_to_image_stream_chunk() {
+        let event = SseEvent {
+            event: Some("response.image_generation_call.partial_image".to_string()),
+            data: json!({
+                "type": "response.image_generation_call.partial_image",
+                "partial_image_b64": "iVBORw0KGgo="
+            })
+            .to_string(),
+        };
+
+        let chunks = translate_sse_event_to_image_chunk(&event, &mut false);
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(
+            chunks[0].get("type").and_then(Value::as_str),
+            Some("image_generation.partial_image")
+        );
+        assert_eq!(
+            chunks[0].get("b64_json").and_then(Value::as_str),
+            Some("iVBORw0KGgo=")
+        );
     }
 
     #[test]
