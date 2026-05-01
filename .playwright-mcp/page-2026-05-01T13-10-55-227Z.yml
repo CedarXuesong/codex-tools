@@ -1,0 +1,42 @@
+- main [ref=e4]:
+  - generic [ref=e5]:
+    - button "Codex Tools 标志 Codex Tools" [ref=e6] [cursor=pointer]:
+      - img "Codex Tools 标志" [ref=e7]
+      - heading "Codex Tools" [level=1] [ref=e8]
+    - button "手动刷新" [ref=e11] [cursor=pointer]:
+      - img [ref=e12]
+  - generic [ref=e16]:
+    - generic [ref=e17]:
+      - region "账号概览" [ref=e18]:
+        - article [ref=e19]:
+          - generic [ref=e20]: 账号数
+          - strong [ref=e21]: "0"
+        - article "正在读取本机 Codex token 日志" [ref=e22]:
+          - generic [ref=e23]: 会话 Token
+          - strong [ref=e24]: "--"
+        - article "正在读取本机 Codex token 日志" [ref=e25]:
+          - generic [ref=e26]: 24h Token
+          - strong [ref=e27]: "--"
+        - article "正在读取本机 Codex token 日志" [ref=e28]:
+          - generic [ref=e29]: 7d Token
+          - strong [ref=e30]: "--"
+        - article "正在读取本机 Codex token 日志" [ref=e31]:
+          - generic [ref=e32]: 30d Token
+          - strong [ref=e33]: "--"
+        - button "全部导出" [disabled] [ref=e34]
+      - generic [ref=e35]:
+        - button "智能切换" [ref=e36] [cursor=pointer]
+        - button "添加账号" [ref=e37] [cursor=pointer]
+    - generic [ref=e39]:
+      - heading "还没有账号" [level=3] [ref=e40]
+      - paragraph [ref=e41]: 点击“添加账号”，完成授权后会自动出现在列表中。
+  - navigation "底部导航" [ref=e42]:
+    - button "账号" [ref=e43] [cursor=pointer]:
+      - img [ref=e44]
+      - generic [ref=e49]: 账号
+    - button "API 反代" [ref=e50] [cursor=pointer]:
+      - img [ref=e51]
+      - generic [ref=e53]: API 反代
+    - button "设置" [ref=e54] [cursor=pointer]:
+      - img [ref=e55]
+      - generic [ref=e58]: 设置

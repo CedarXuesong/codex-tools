@@ -12,6 +12,18 @@ fn default_api_proxy_port() -> u16 {
     8787
 }
 
+pub(crate) fn default_api_proxy_sequential_five_hour_limit_percent() -> f64 {
+    80.0
+}
+
+pub(crate) fn normalize_api_proxy_sequential_five_hour_limit_percent(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 100.0)
+    } else {
+        default_api_proxy_sequential_five_hour_limit_percent()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AccountsStore {
     #[serde(default = "default_store_version")]
@@ -233,6 +245,40 @@ pub(crate) struct ApiProxyStatus {
     pub(crate) last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApiProxyUsagePoint {
+    pub(crate) timestamp: i64,
+    pub(crate) calls: i64,
+    pub(crate) tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApiProxyUsageSeries {
+    pub(crate) model: String,
+    pub(crate) total_calls: i64,
+    pub(crate) total_tokens: i64,
+    pub(crate) points: Vec<ApiProxyUsagePoint>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApiProxyUsageStats {
+    pub(crate) updated_at: i64,
+    pub(crate) range_seconds: i64,
+    pub(crate) bucket_seconds: i64,
+    pub(crate) series: Vec<ApiProxyUsageSeries>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ApiProxyLoadBalanceMode {
+    #[default]
+    Average,
+    Sequential,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum RemoteAuthMode {
@@ -387,6 +433,12 @@ pub(crate) struct AppSettings {
     pub(crate) auto_start_api_proxy: bool,
     #[serde(default = "default_api_proxy_port")]
     pub(crate) api_proxy_port: u16,
+    #[serde(default)]
+    pub(crate) api_proxy_load_balance_mode: ApiProxyLoadBalanceMode,
+    #[serde(default = "default_api_proxy_sequential_five_hour_limit_percent")]
+    pub(crate) api_proxy_sequential_five_hour_limit_percent: f64,
+    #[serde(default)]
+    pub(crate) api_proxy_sequential_account_key: Option<String>,
     pub(crate) remote_servers: Vec<RemoteServerConfig>,
     pub(crate) api_proxy_api_key: Option<String>,
     pub(crate) locale: AppLocale,
@@ -408,6 +460,10 @@ impl Default for AppSettings {
             restart_editor_targets: Vec::new(),
             auto_start_api_proxy: false,
             api_proxy_port: default_api_proxy_port(),
+            api_proxy_load_balance_mode: ApiProxyLoadBalanceMode::default(),
+            api_proxy_sequential_five_hour_limit_percent:
+                default_api_proxy_sequential_five_hour_limit_percent(),
+            api_proxy_sequential_account_key: None,
             remote_servers: Vec::new(),
             api_proxy_api_key: None,
             locale: AppLocale::default(),
@@ -430,6 +486,8 @@ pub(crate) struct AppSettingsPatch {
     pub(crate) restart_editor_targets: Option<Vec<EditorAppId>>,
     pub(crate) auto_start_api_proxy: Option<bool>,
     pub(crate) api_proxy_port: Option<u16>,
+    pub(crate) api_proxy_load_balance_mode: Option<ApiProxyLoadBalanceMode>,
+    pub(crate) api_proxy_sequential_five_hour_limit_percent: Option<f64>,
     pub(crate) remote_servers: Option<Vec<RemoteServerConfig>>,
     pub(crate) locale: Option<AppLocale>,
     pub(crate) skipped_update_version: Option<Option<String>>,

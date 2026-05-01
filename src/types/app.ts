@@ -132,6 +132,30 @@ export type ApiProxyStatus = {
   lastError: string | null;
 };
 
+export type ApiProxyUsageRange = "1h" | "24h" | "7d" | "14d" | "30d";
+
+export type ApiProxyUsageMetric = "calls" | "tokens";
+
+export type ApiProxyUsagePoint = {
+  timestamp: number;
+  calls: number;
+  tokens: number;
+};
+
+export type ApiProxyUsageSeries = {
+  model: string;
+  totalCalls: number;
+  totalTokens: number;
+  points: ApiProxyUsagePoint[];
+};
+
+export type ApiProxyUsageStats = {
+  updatedAt: number;
+  rangeSeconds: number;
+  bucketSeconds: number;
+  series: ApiProxyUsageSeries[];
+};
+
 export type RemoteAuthMode = "keyContent" | "keyFile" | "keyPath" | "password";
 
 export type RemoteServerConfig = {
@@ -223,6 +247,8 @@ export type ThemeMode = "light" | "dark";
 
 export type TrayUsageDisplayMode = "remaining" | "used" | "hidden";
 
+export type ApiProxyLoadBalanceMode = "average" | "sequential";
+
 export type EditorAppId =
   | "vscode"
   | "vscodeInsiders"
@@ -249,6 +275,8 @@ export type AppSettings = {
   restartEditorTargets: EditorAppId[];
   autoStartApiProxy: boolean;
   apiProxyPort: number;
+  apiProxyLoadBalanceMode: ApiProxyLoadBalanceMode;
+  apiProxySequentialFiveHourLimitPercent: number;
   remoteServers: RemoteServerConfig[];
   locale: AppLocale;
   skippedUpdateVersion: string | null;

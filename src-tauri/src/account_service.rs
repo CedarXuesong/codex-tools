@@ -123,7 +123,8 @@ pub(crate) async fn create_api_account_internal(
     let (last_validated_at, balance_text, profile_last_validation_error) = if input.force_save {
         (None, None, None)
     } else {
-        let balance = profile_files::validate_relay_target(&base_url, &api_key, &model_name).await?;
+        let balance =
+            profile_files::validate_relay_target(&base_url, &api_key, &model_name).await?;
         (Some(now_unix_seconds()), balance, None)
     };
 
@@ -916,7 +917,11 @@ async fn commit_prepared_import(
             current_variant_key.as_deref(),
         );
         let store_path = account_store_path_from_data_dir(&app_paths::app_data_dir(app)?);
-        if let Some(account) = store.accounts.iter_mut().find(|account| account.id == summary.id) {
+        if let Some(account) = store
+            .accounts
+            .iter_mut()
+            .find(|account| account.id == summary.id)
+        {
             profile_files::sync_account_profile_in_store_path(&store_path, account)?;
         }
         save_store(app, &store)?;
@@ -1258,23 +1263,20 @@ fn validate_reauthorization_target(
         }
     }
 
-    if existing
-        .principal_id
-        .as_deref()
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case(prepared.principal_id.trim()))
-        || existing.account_id == prepared.account_id
+    if existing.principal_id.as_deref().is_some_and(|value| {
+        value
+            .trim()
+            .eq_ignore_ascii_case(prepared.principal_id.trim())
+    }) || existing.account_id == prepared.account_id
     {
         return Ok(());
     }
 
-    let target_label = existing
-        .email
-        .as_deref()
-        .unwrap_or(existing.label.as_str());
+    let target_label = existing.email.as_deref().unwrap_or(existing.label.as_str());
     let new_label = prepared
         .email
         .as_deref()
-        .unwrap_or_else(|| prepared.account_id.as_str());
+        .unwrap_or(prepared.account_id.as_str());
     Err(format!(
         "重新授权得到的账号与目标账号不一致。目标账号: {target_label}；新账号: {new_label}。请确认浏览器登录的是同一个账号。"
     ))
@@ -1472,9 +1474,9 @@ fn normalize_import_source(source: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::expand_import_json_content;
     use super::normalize_usage_error_message;
     use super::should_suspend_auth_keepalive;
-    use super::expand_import_json_content;
     use super::upsert_prepared_import;
     use super::PreparedImport;
     use super::AUTH_EXPIRED_NOTICE;

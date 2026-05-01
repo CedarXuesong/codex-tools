@@ -11,6 +11,9 @@ import type { MessageCatalog } from "../i18n/catalog";
 import type {
   AccountSummary,
   ApiProxyStatus,
+  ApiProxyUsageMetric,
+  ApiProxyUsageRange,
+  ApiProxyUsageStats,
   AppSettings,
   AuthJsonImportInput,
   CloudflaredStatus,
@@ -36,7 +39,17 @@ const TOKEN_USAGE_REFRESH_MS = 60_000;
 const EDITOR_SCAN_MS = 60_000;
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
 const API_PROXY_POLL_MS = 4_000;
+const API_PROXY_USAGE_POLL_MS = 2_000;
 const CLOUDFLARED_POLL_MS = 3_000;
+const DEFAULT_API_PROXY_USAGE_RANGE: ApiProxyUsageRange = "24h";
+const DEFAULT_API_PROXY_USAGE_METRIC: ApiProxyUsageMetric = "calls";
+const API_PROXY_USAGE_RANGE_SECONDS: Record<ApiProxyUsageRange, number> = {
+  "1h": 3_600,
+  "24h": 86_400,
+  "7d": 604_800,
+  "14d": 1_209_600,
+  "30d": 2_592_000,
+};
 const DEFAULT_SETTINGS: AppSettings = {
   launchAtStartup: false,
   trayUsageDisplayMode: "remaining",
@@ -49,6 +62,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   restartEditorTargets: [],
   autoStartApiProxy: false,
   apiProxyPort: 8787,
+  apiProxyLoadBalanceMode: "average",
+  apiProxySequentialFiveHourLimitPercent: 80,
   remoteServers: [],
   locale: DEFAULT_LOCALE,
   skippedUpdateVersion: null,
@@ -155,6 +170,15 @@ export function useCodexController() {
   const [oauthWaitingForCallback, setOauthWaitingForCallback] = useState(false);
   const [exportingAccounts, setExportingAccounts] = useState(false);
   const [apiProxyStatus, setApiProxyStatus] = useState<ApiProxyStatus>(DEFAULT_API_PROXY_STATUS);
+  const [apiProxyUsageStats, setApiProxyUsageStats] = useState<ApiProxyUsageStats | null>(null);
+  const [apiProxyUsageLoading, setApiProxyUsageLoading] = useState(true);
+  const [apiProxyUsageClearing, setApiProxyUsageClearing] = useState(false);
+  const [apiProxyUsageRange, setApiProxyUsageRange] = useState<ApiProxyUsageRange>(
+    DEFAULT_API_PROXY_USAGE_RANGE,
+  );
+  const [apiProxyUsageMetric, setApiProxyUsageMetric] = useState<ApiProxyUsageMetric>(
+    DEFAULT_API_PROXY_USAGE_METRIC,
+  );
   const [cloudflaredStatus, setCloudflaredStatus] = useState<CloudflaredStatus>(DEFAULT_CLOUDFLARED_STATUS);
   const [remoteProxyStatusesRaw, setRemoteProxyStatusesRaw] = useState<Record<string, RemoteProxyStatus>>({});
   const [remoteProxyLogs, setRemoteProxyLogs] = useState<Record<string, string>>({});
@@ -189,6 +213,8 @@ export function useCodexController() {
   const deleteConfirmTimerRef = useRef<number | null>(null);
   const settingsUpdateQueueRef = useRef<Promise<void>>(Promise.resolve());
   const settingsRef = useRef<AppSettings>(DEFAULT_SETTINGS);
+  const apiProxyUsageLoadSeqRef = useRef(0);
+  const apiProxyUsagePollInFlightRef = useRef(false);
   const reloginPromptedAccountKeysRef = useRef<Set<string>>(new Set());
   const profileIntegrityPromptedRef = useRef(false);
 
@@ -357,6 +383,44 @@ export function useCodexController() {
       setApiProxyStatus(DEFAULT_API_PROXY_STATUS);
     }
   }, [localizeApiProxyStatus]);
+
+  const loadApiProxyUsageStats = useCallback(
+    async (range: ApiProxyUsageRange, options?: { silent?: boolean }) => {
+      const isSilent = options?.silent === true;
+      if (isSilent) {
+        if (apiProxyUsagePollInFlightRef.current) {
+          return;
+        }
+        apiProxyUsagePollInFlightRef.current = true;
+      } else {
+        setApiProxyUsageStats(null);
+        setApiProxyUsageLoading(true);
+      }
+
+      const requestId = ++apiProxyUsageLoadSeqRef.current;
+
+      try {
+        const data = await invoke<ApiProxyUsageStats>("get_api_proxy_usage_stats", {
+          rangeSeconds: API_PROXY_USAGE_RANGE_SECONDS[range],
+        });
+        if (requestId !== apiProxyUsageLoadSeqRef.current) {
+          return;
+        }
+        setApiProxyUsageStats(data);
+      } catch {
+        if (requestId !== apiProxyUsageLoadSeqRef.current) {
+          return;
+        }
+      } finally {
+        if (isSilent) {
+          apiProxyUsagePollInFlightRef.current = false;
+        } else if (requestId === apiProxyUsageLoadSeqRef.current) {
+          setApiProxyUsageLoading(false);
+        }
+      }
+    },
+    [],
+  );
 
   const loadCloudflaredStatus = useCallback(async () => {
     try {
@@ -653,6 +717,7 @@ export function useCodexController() {
         const initialAccounts = await loadAccounts();
         maybeShowProfileIntegrityNotice(initialAccounts);
         await loadApiProxyStatus();
+        await loadApiProxyUsageStats(DEFAULT_API_PROXY_USAGE_RANGE);
         await loadCloudflaredStatus();
         await refreshUsage(true);
         await refreshTokenUsage(true);
@@ -694,6 +759,7 @@ export function useCodexController() {
     checkForAppUpdate,
     loadAccounts,
     loadApiProxyStatus,
+    loadApiProxyUsageStats,
     loadCloudflaredStatus,
     loadInstalledEditorApps,
     loadOpencodeDesktopAppInstalled,
@@ -790,6 +856,31 @@ export function useCodexController() {
       clearInterval(timer);
     };
   }, [apiProxyStatus.running, loadApiProxyStatus]);
+
+  useEffect(() => {
+    if (
+      !apiProxyStatus.running ||
+      apiProxyUsageLoading ||
+      apiProxyUsageClearing ||
+      apiProxyUsagePollInFlightRef.current
+    ) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      void loadApiProxyUsageStats(apiProxyUsageRange, { silent: true });
+    }, API_PROXY_USAGE_POLL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [
+    apiProxyStatus.running,
+    apiProxyUsageClearing,
+    apiProxyUsageLoading,
+    apiProxyUsageRange,
+    loadApiProxyUsageStats,
+  ]);
 
   useEffect(() => {
     if (!cloudflaredStatus.running) {
@@ -1082,6 +1173,7 @@ export function useCodexController() {
         port: port ?? null,
       });
       setApiProxyStatus(localizeApiProxyStatus(status));
+      void loadApiProxyUsageStats(apiProxyUsageRange);
       const target = status.port ? `127.0.0.1:${status.port}` : copy.notices.proxyLocalTargetFallback;
       setNotice({ type: "ok", message: copy.notices.proxyStarted(target) });
     } catch (error) {
@@ -1094,7 +1186,9 @@ export function useCodexController() {
     }
   }, [
     apiProxyStatus.running,
+    apiProxyUsageRange,
     copy.notices,
+    loadApiProxyUsageStats,
     localizeApiProxyStatus,
     localizeError,
     startingApiProxy,
@@ -1145,6 +1239,50 @@ export function useCodexController() {
       setRefreshingApiProxyKey(false);
     }
   }, [copy.notices, localizeApiProxyStatus, localizeError, refreshingApiProxyKey]);
+
+  const onSelectApiProxyUsageRange = useCallback(
+    (range: ApiProxyUsageRange) => {
+      if (range === apiProxyUsageRange) {
+        return;
+      }
+      setApiProxyUsageRange(range);
+      void loadApiProxyUsageStats(range);
+    },
+    [apiProxyUsageRange, loadApiProxyUsageStats],
+  );
+
+  const onSelectApiProxyUsageMetric = useCallback((metric: ApiProxyUsageMetric) => {
+    if (metric === apiProxyUsageMetric) {
+      return;
+    }
+    setApiProxyUsageMetric(metric);
+  }, [apiProxyUsageMetric]);
+
+  const onClearApiProxyUsageStats = useCallback(async () => {
+    if (apiProxyUsageClearing) {
+      return;
+    }
+
+    setApiProxyUsageClearing(true);
+    try {
+      await invoke("clear_api_proxy_usage_stats");
+      await loadApiProxyUsageStats(apiProxyUsageRange);
+      setNotice({ type: "ok", message: copy.notices.apiProxyUsageCleared });
+    } catch (error) {
+      setNotice({
+        type: "error",
+        message: copy.notices.apiProxyUsageClearFailed(localizeError(String(error))),
+      });
+    } finally {
+      setApiProxyUsageClearing(false);
+    }
+  }, [
+    apiProxyUsageClearing,
+    apiProxyUsageRange,
+    copy.notices,
+    loadApiProxyUsageStats,
+    localizeError,
+  ]);
 
   const ensureRemoteLocalDependency = useCallback(
     async (server: RemoteServerConfig) => {
@@ -1685,6 +1823,11 @@ export function useCodexController() {
     oauthWaitingForCallback,
     exportingAccounts,
     apiProxyStatus,
+    apiProxyUsageStats,
+    apiProxyUsageRange,
+    apiProxyUsageMetric,
+    apiProxyUsageLoading,
+    apiProxyUsageClearing,
     cloudflaredStatus,
     remoteProxyStatuses,
     remoteProxyLogs,
@@ -1736,6 +1879,9 @@ export function useCodexController() {
     onImportAuthFiles,
     onExportAccounts,
     loadApiProxyStatus,
+    onSelectApiProxyUsageRange,
+    onSelectApiProxyUsageMetric,
+    onClearApiProxyUsageStats,
     onStartApiProxy,
     onStopApiProxy,
     onRefreshApiProxyKey,
