@@ -414,18 +414,18 @@ type ApiProxyUsageChartProps = {
 };
 
 const API_PROXY_USAGE_PALETTE = [
-  "#22d3ee",
-  "#fb923c",
-  "#a78bfa",
-  "#34d399",
-  "#f87171",
-  "#60a5fa",
-  "#f472b6",
-  "#fbbf24",
-  "#2dd4bf",
-  "#818cf8",
-  "#a3e635",
-  "#e879f9",
+  "var(--proxy-usage-series-1)",
+  "var(--proxy-usage-series-2)",
+  "var(--proxy-usage-series-3)",
+  "var(--proxy-usage-series-4)",
+  "var(--proxy-usage-series-5)",
+  "var(--proxy-usage-series-6)",
+  "var(--proxy-usage-series-7)",
+  "var(--proxy-usage-series-8)",
+  "var(--proxy-usage-series-9)",
+  "var(--proxy-usage-series-10)",
+  "var(--proxy-usage-series-11)",
+  "var(--proxy-usage-series-12)",
 ] as const;
 
 const API_PROXY_USAGE_TOOLTIP_SIZE = { width: 256, height: 104 };
@@ -1897,10 +1897,12 @@ export function ApiProxyPanel({
                 }}
                 disabled={busy || status.running}
               />
-              </label>
+            </label>
 
-            <div className="proxyInlineSetting">
-              <span className="proxyInlineLabel">{proxyCopy.defaultStartLabel}</span>
+            <div className="proxySwitchRow proxyInlineSetting">
+              <div className="settingMeta">
+                <strong>{proxyCopy.defaultStartLabel}</strong>
+              </div>
               <label className="themeSwitch" aria-label={proxyCopy.defaultStartLabel}>
                 <input
                   type="checkbox"
@@ -2645,8 +2647,10 @@ export function ApiProxyPanel({
         <section className="proxySectionCard">
           <div className="proxySectionHeader">
             <h3>{proxyCopy.cloudflaredTitle}</h3>
-            <div className="proxySectionToggle">
-              <span className="proxyInlineLabel">{proxyCopy.cloudflaredToggle}</span>
+            <div className="proxySwitchRow proxySectionToggle">
+              <div className="settingMeta">
+                <strong>{proxyCopy.cloudflaredToggle}</strong>
+              </div>
               <label className="themeSwitch" aria-label={proxyCopy.cloudflaredToggle}>
                 <input
                   type="checkbox"
@@ -2770,8 +2774,10 @@ export function ApiProxyPanel({
                   ) : null}
 
                   <div className="cloudflaredToolbar">
-                    <div className="cloudflaredToolbarMeta">
-                      <span className="proxyInlineLabel">{proxyCopy.useHttp2}</span>
+                    <div className="proxySwitchRow cloudflaredToolbarMeta">
+                      <div className="settingMeta">
+                        <strong>{proxyCopy.useHttp2}</strong>
+                      </div>
                       <label className="themeSwitch" aria-label={proxyCopy.useHttp2}>
                         <input
                           type="checkbox"
