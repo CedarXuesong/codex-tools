@@ -447,6 +447,8 @@ pub(crate) struct AppSettings {
     #[serde(default = "default_api_proxy_sequential_five_hour_limit_percent")]
     pub(crate) api_proxy_sequential_five_hour_limit_percent: f64,
     #[serde(default)]
+    pub(crate) api_proxy_disabled_models: Vec<String>,
+    #[serde(default)]
     pub(crate) api_proxy_sequential_account_key: Option<String>,
     pub(crate) remote_servers: Vec<RemoteServerConfig>,
     pub(crate) api_proxy_api_key: Option<String>,
@@ -472,6 +474,7 @@ impl Default for AppSettings {
             api_proxy_load_balance_mode: ApiProxyLoadBalanceMode::default(),
             api_proxy_sequential_five_hour_limit_percent:
                 default_api_proxy_sequential_five_hour_limit_percent(),
+            api_proxy_disabled_models: Vec::new(),
             api_proxy_sequential_account_key: None,
             remote_servers: Vec::new(),
             api_proxy_api_key: None,
@@ -497,6 +500,7 @@ pub(crate) struct AppSettingsPatch {
     pub(crate) api_proxy_port: Option<u16>,
     pub(crate) api_proxy_load_balance_mode: Option<ApiProxyLoadBalanceMode>,
     pub(crate) api_proxy_sequential_five_hour_limit_percent: Option<f64>,
+    pub(crate) api_proxy_disabled_models: Option<Vec<String>>,
     pub(crate) remote_servers: Option<Vec<RemoteServerConfig>>,
     pub(crate) locale: Option<AppLocale>,
     pub(crate) skipped_update_version: Option<Option<String>>,

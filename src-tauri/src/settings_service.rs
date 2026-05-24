@@ -5,6 +5,7 @@ use crate::cli;
 use crate::models::normalize_api_proxy_sequential_five_hour_limit_percent;
 use crate::models::AppSettings;
 use crate::models::AppSettingsPatch;
+use crate::proxy_service::sanitize_api_proxy_disabled_models_for_settings;
 use crate::state::AppState;
 use crate::store::load_store;
 use crate::store::save_store;
@@ -81,6 +82,10 @@ pub(crate) async fn update_app_settings_internal(
         if let Some(value) = patch.api_proxy_sequential_five_hour_limit_percent {
             store.settings.api_proxy_sequential_five_hour_limit_percent =
                 normalize_api_proxy_sequential_five_hour_limit_percent(value);
+        }
+        if let Some(value) = patch.api_proxy_disabled_models {
+            store.settings.api_proxy_disabled_models =
+                sanitize_api_proxy_disabled_models_for_settings(value);
         }
         if let Some(value) = patch.remote_servers {
             store.settings.remote_servers = value;

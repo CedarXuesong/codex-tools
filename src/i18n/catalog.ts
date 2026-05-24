@@ -192,6 +192,18 @@ export type MessageCatalog = {
     loadBalanceSequential: string;
     sequentialFiveHourLimitLabel: string;
     sequentialFiveHourLimitDescription: string;
+    modelMenuLabel: string;
+    modelMenuDescription: string;
+    modelMenuOpen: string;
+    modelMenuTitle: string;
+    modelMenuDialogDescription: string;
+    modelMenuEnableAll: string;
+    modelMenuDisableAll: string;
+    modelMenuCancel: string;
+    modelMenuSave: string;
+    modelMenuSearchLabel: string;
+    modelMenuSearchPlaceholder: string;
+    modelMenuSearchEmpty: string;
     statusLabel: string;
     statusRunning: string;
     statusStopped: string;

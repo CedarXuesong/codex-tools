@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::fs;
 use std::io::Write;
@@ -169,6 +170,7 @@ struct ProxyCandidate {
 struct ProxyCandidateSelection {
     candidates: Vec<ProxyCandidate>,
     load_balance: ProxyLoadBalanceConfig,
+    settings: AppSettings,
     persisted_sequential_account_key: Option<String>,
 }
 
@@ -671,6 +673,24 @@ async fn health_handler() -> impl IntoResponse {
     Json(json!({ "ok": true }))
 }
 
+pub(crate) fn get_api_proxy_supported_models_internal() -> Vec<String> {
+    MODELS.iter().map(|model| (*model).to_string()).collect()
+}
+
+pub(crate) fn sanitize_api_proxy_disabled_models_for_settings(models: Vec<String>) -> Vec<String> {
+    let disabled = models
+        .into_iter()
+        .filter_map(|model| normalize_api_proxy_config_model_name(&model))
+        .filter(|model| MODELS.contains(&model.as_str()))
+        .collect::<HashSet<_>>();
+
+    MODELS
+        .iter()
+        .filter(|model| disabled.contains(**model))
+        .map(|model| (*model).to_string())
+        .collect()
+}
+
 async fn models_handler(
     State(context): State<Arc<ProxyContext>>,
     headers: HeaderMap,
@@ -679,9 +699,17 @@ async fn models_handler(
         return response;
     }
 
+    let settings = match load_api_proxy_settings(&context.storage).await {
+        Ok(settings) => settings,
+        Err(error) => {
+            update_proxy_error(&context, Some(error.clone())).await;
+            return json_error_response(StatusCode::BAD_GATEWAY, &error);
+        }
+    };
+
     Json(json!({
         "object": "list",
-        "data": MODELS
+        "data": api_proxy_visible_models(&settings)
             .iter()
             .map(|model| {
                 json!({
@@ -2502,18 +2530,22 @@ async fn send_codex_request_over_candidates(
     payload: &Value,
 ) -> Result<(ProxyCandidate, CodexUpstreamResponse), Response<Body>> {
     let selection = match load_proxy_candidate_selection(&context.storage).await {
-        Ok(selection) if !selection.candidates.is_empty() => selection,
-        Ok(_) => {
-            return Err(json_error_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "No authorized account is available for proxying.",
-            ));
-        }
+        Ok(selection) => selection,
         Err(error) => {
             update_proxy_error(context, Some(error.clone())).await;
             return Err(json_error_response(StatusCode::BAD_GATEWAY, &error));
         }
     };
+    if let Err(message) = ensure_api_proxy_payload_models_enabled(payload, &selection.settings) {
+        update_proxy_error(context, Some(message.clone())).await;
+        return Err(json_error_response(StatusCode::BAD_REQUEST, &message));
+    }
+    if selection.candidates.is_empty() {
+        return Err(json_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "No authorized account is available for proxying.",
+        ));
+    }
     let current_sequential_account_key = sequential_account_key_for_request(
         current_sequential_proxy_account_key(context).await,
         selection.persisted_sequential_account_key,
@@ -2795,6 +2827,7 @@ async fn load_proxy_candidate_selection(
     let _guard = storage.store_lock.lock().await;
     let store = load_store_from_path(&account_store_path_from_data_dir(&storage.data_dir))?;
     let load_balance = ProxyLoadBalanceConfig::from_settings(&store.settings);
+    let settings = store.settings.clone();
 
     let mut deduped: HashMap<String, ProxyCandidate> = HashMap::new();
     for candidate in store
@@ -2813,8 +2846,112 @@ async fn load_proxy_candidate_selection(
     Ok(ProxyCandidateSelection {
         candidates: deduped.into_values().collect(),
         load_balance,
+        settings,
         persisted_sequential_account_key: store.settings.api_proxy_sequential_account_key,
     })
+}
+
+async fn load_api_proxy_settings(storage: &ProxyStorageContext) -> Result<AppSettings, String> {
+    let _guard = storage.store_lock.lock().await;
+    let store = load_store_from_path(&account_store_path_from_data_dir(&storage.data_dir))?;
+    Ok(store.settings)
+}
+
+fn normalize_api_proxy_config_model_name(model: &str) -> Option<String> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let upstream = map_client_model_to_upstream(trimmed).unwrap_or_else(|_| trimmed.to_string());
+    Some(normalize_model_for_client(&upstream))
+}
+
+fn api_proxy_disabled_model_set(settings: &AppSettings) -> HashSet<String> {
+    settings
+        .api_proxy_disabled_models
+        .iter()
+        .filter_map(|model| normalize_api_proxy_config_model_name(model))
+        .filter(|model| MODELS.contains(&model.as_str()))
+        .collect()
+}
+
+fn api_proxy_visible_models(settings: &AppSettings) -> Vec<&'static str> {
+    let disabled = api_proxy_disabled_model_set(settings);
+    MODELS
+        .iter()
+        .copied()
+        .filter(|model| !disabled.contains(*model))
+        .collect()
+}
+
+fn ensure_api_proxy_payload_models_enabled(payload: &Value, settings: &AppSettings) -> Result<(), String> {
+    let disabled = api_proxy_disabled_model_set(settings);
+    let blocked = api_proxy_requested_models_from_payload(payload)
+        .into_iter()
+        .filter(|model| disabled.contains(model))
+        .collect::<Vec<_>>();
+    if blocked.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "请求模型已在反代控制面板中禁用: {}",
+        blocked.join(", ")
+    ))
+}
+
+fn api_proxy_requested_models_from_payload(payload: &Value) -> Vec<String> {
+    let image_models = api_proxy_requested_image_tool_models(payload);
+    if !image_models.is_empty() {
+        return image_models;
+    }
+
+    let mut models = Vec::new();
+    push_unique_api_proxy_model(
+        &mut models,
+        payload
+            .get("model")
+            .and_then(Value::as_str)
+            .and_then(normalize_api_proxy_config_model_name),
+    );
+    models
+}
+
+fn api_proxy_requested_image_tool_models(payload: &Value) -> Vec<String> {
+    let mut models = Vec::new();
+    let Some(tools) = payload.get("tools").and_then(Value::as_array) else {
+        return models;
+    };
+
+    for tool in tools {
+        let Some(object) = tool.as_object() else {
+            continue;
+        };
+        if object.get("type").and_then(Value::as_str) != Some("image_generation") {
+            continue;
+        }
+
+        push_unique_api_proxy_model(
+            &mut models,
+            object
+                .get("model")
+                .and_then(Value::as_str)
+                .and_then(normalize_api_proxy_config_model_name),
+        );
+    }
+
+    models
+}
+
+fn push_unique_api_proxy_model(models: &mut Vec<String>, next: Option<String>) {
+    let Some(next) = next else {
+        return;
+    };
+    if models.iter().any(|model| model == &next) {
+        return;
+    }
+    models.push(next);
 }
 
 fn account_to_proxy_candidate(account: StoredAccount) -> Option<ProxyCandidate> {
@@ -5122,9 +5259,12 @@ fn parse_proxy_request_body_limit_mib(value: Option<&str>) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::account_to_proxy_candidate;
+    use super::api_proxy_disabled_model_set;
+    use super::api_proxy_requested_models_from_payload;
     use super::api_proxy_usage_bucket_seconds;
     use super::api_proxy_usage_model_from_payload;
     use super::api_proxy_usage_store_has_legacy_private_fields;
+    use super::api_proxy_visible_models;
     use super::build_api_proxy_usage_stats;
     use super::convert_completed_response_to_chat_completion;
     use super::convert_openai_chat_request_to_codex;
@@ -5146,10 +5286,12 @@ mod tests {
     use super::rewrite_response_models_for_client;
     use super::rewrite_sse_event_data_models_for_client;
     use super::sequential_account_key_for_request;
+    use super::sanitize_api_proxy_disabled_models_for_settings;
     use super::should_use_responses_websocket;
     use super::translate_sse_event_to_chat_chunk;
     use super::translate_sse_event_to_image_chunk;
     use super::websocket_target_host_port;
+    use super::ensure_api_proxy_payload_models_enabled;
     use super::ApiProxyUsageEvent;
     use super::ChatStreamState;
     use super::ImageMultipartRequest;
@@ -5159,6 +5301,7 @@ mod tests {
     use super::API_PROXY_USAGE_RANGE_1H_SECONDS;
     use super::API_PROXY_USAGE_RETENTION_SECONDS;
     use super::DEFAULT_PROXY_REQUEST_BODY_LIMIT_BYTES;
+    use crate::models::AppSettings;
     use crate::models::ApiProxyLoadBalanceMode;
     use crate::models::StoredAccount;
     use crate::models::UsageSnapshot;
@@ -5345,6 +5488,70 @@ mod tests {
         let model = api_proxy_usage_model_from_payload(&payload);
 
         assert_eq!(model, "gpt-image-1");
+    }
+
+    #[test]
+    fn sanitize_api_proxy_disabled_models_filters_unknown_and_orders_results() {
+        let disabled = sanitize_api_proxy_disabled_models_for_settings(vec![
+            "gpt-image-2".to_string(),
+            "gpt-5-4".to_string(),
+            "unknown-model".to_string(),
+            "gpt5.4".to_string(),
+        ]);
+
+        assert_eq!(disabled, vec!["gpt-5.4", "gpt-image-2"]);
+    }
+
+    #[test]
+    fn api_proxy_visible_models_hide_disabled_entries() {
+        let settings = AppSettings {
+            api_proxy_disabled_models: vec!["gpt-5.4".to_string(), "gpt-image-1".to_string()],
+            ..AppSettings::default()
+        };
+
+        let visible = api_proxy_visible_models(&settings);
+        let disabled = api_proxy_disabled_model_set(&settings);
+
+        assert!(disabled.contains("gpt-5.4"));
+        assert!(!visible.contains(&"gpt-5.4"));
+        assert!(!visible.contains(&"gpt-image-1"));
+        assert!(visible.contains(&"gpt-5.5"));
+    }
+
+    #[test]
+    fn api_proxy_payload_model_validation_rejects_disabled_chat_model() {
+        let settings = AppSettings {
+            api_proxy_disabled_models: vec!["gpt-5.4".to_string()],
+            ..AppSettings::default()
+        };
+        let payload = json!({ "model": "gpt-5.4" });
+
+        let error = ensure_api_proxy_payload_models_enabled(&payload, &settings)
+            .expect_err("disabled chat model should be rejected");
+
+        assert!(error.contains("gpt-5.4"));
+    }
+
+    #[test]
+    fn api_proxy_payload_model_validation_prefers_image_tool_model() {
+        let settings = AppSettings {
+            api_proxy_disabled_models: vec!["gpt-image-2".to_string()],
+            ..AppSettings::default()
+        };
+        let payload = json!({
+            "model": "gpt-5.5",
+            "tools": [{
+                "type": "image_generation",
+                "model": "gpt-image-2"
+            }]
+        });
+
+        let models = api_proxy_requested_models_from_payload(&payload);
+        let error = ensure_api_proxy_payload_models_enabled(&payload, &settings)
+            .expect_err("disabled image model should be rejected");
+
+        assert_eq!(models, vec!["gpt-image-2"]);
+        assert!(error.contains("gpt-image-2"));
     }
 
     #[test]

@@ -64,6 +64,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   apiProxyPort: 8787,
   apiProxyLoadBalanceMode: "average",
   apiProxySequentialFiveHourLimitPercent: 80,
+  apiProxyDisabledModels: [],
   remoteServers: [],
   locale: DEFAULT_LOCALE,
   skippedUpdateVersion: null,
@@ -170,6 +171,7 @@ export function useCodexController() {
   const [oauthWaitingForCallback, setOauthWaitingForCallback] = useState(false);
   const [exportingAccounts, setExportingAccounts] = useState(false);
   const [apiProxyStatus, setApiProxyStatus] = useState<ApiProxyStatus>(DEFAULT_API_PROXY_STATUS);
+  const [apiProxySupportedModels, setApiProxySupportedModels] = useState<string[]>([]);
   const [apiProxyUsageStats, setApiProxyUsageStats] = useState<ApiProxyUsageStats | null>(null);
   const [apiProxyUsageLoading, setApiProxyUsageLoading] = useState(true);
   const [apiProxyUsageClearing, setApiProxyUsageClearing] = useState(false);
@@ -383,6 +385,15 @@ export function useCodexController() {
       setApiProxyStatus(DEFAULT_API_PROXY_STATUS);
     }
   }, [localizeApiProxyStatus]);
+
+  const loadApiProxySupportedModels = useCallback(async () => {
+    try {
+      const data = await invoke<string[]>("get_api_proxy_supported_models");
+      setApiProxySupportedModels(Array.isArray(data) ? data : []);
+    } catch {
+      setApiProxySupportedModels([]);
+    }
+  }, []);
 
   const loadApiProxyUsageStats = useCallback(
     async (range: ApiProxyUsageRange, options?: { silent?: boolean }) => {
@@ -713,6 +724,7 @@ export function useCodexController() {
       try {
         await loadInstalledEditorApps();
         await loadOpencodeDesktopAppInstalled();
+        await loadApiProxySupportedModels();
         await loadSettings();
         const initialAccounts = await loadAccounts();
         maybeShowProfileIntegrityNotice(initialAccounts);
@@ -758,6 +770,7 @@ export function useCodexController() {
   }, [
     checkForAppUpdate,
     loadAccounts,
+    loadApiProxySupportedModels,
     loadApiProxyStatus,
     loadApiProxyUsageStats,
     loadCloudflaredStatus,
@@ -1929,6 +1942,7 @@ export function useCodexController() {
     savingSettings,
     installedEditorApps,
     hasOpencodeDesktopApp,
+    apiProxySupportedModels,
     refreshUsage,
     refreshTokenUsage,
     checkForAppUpdate,

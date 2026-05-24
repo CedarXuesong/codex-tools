@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { useI18n } from "../i18n/I18nProvider";
 import type { MessageCatalog } from "../i18n/catalog";
@@ -61,6 +62,8 @@ type ApiProxyPanelProps = {
   savedPort: number;
   loadBalanceMode: ApiProxyLoadBalanceMode;
   sequentialFiveHourLimitPercent: number;
+  apiProxySupportedModels: string[];
+  apiProxyDisabledModels: string[];
   remoteServers: RemoteServerConfig[];
   remoteStatuses: Record<string, RemoteProxyStatus>;
   remoteLogs: Record<string, string>;
@@ -89,6 +92,7 @@ type ApiProxyPanelProps = {
   onPersistPort: (port: number) => Promise<void> | void;
   onUpdateLoadBalanceMode: (mode: ApiProxyLoadBalanceMode) => Promise<void> | void;
   onUpdateSequentialFiveHourLimitPercent: (percent: number) => Promise<void> | void;
+  onUpdateApiProxyDisabledModels: (models: string[]) => Promise<void> | void;
   onUpdateRemoteServers: (servers: RemoteServerConfig[]) => void;
   onRefreshRemoteStatus: (server: RemoteServerConfig) => void;
   onDeployRemote: (server: RemoteServerConfig) => void;
@@ -445,6 +449,11 @@ function hashUsageModel(model: string) {
     hash = (Math.imul(31, hash) + model.charCodeAt(index)) >>> 0;
   }
   return hash;
+}
+
+function normalizeDisabledProxyModels(disabledModels: string[], supportedModels: string[]) {
+  const disabledSet = new Set(disabledModels);
+  return supportedModels.filter((model) => disabledSet.has(model));
 }
 
 function pickUsageColor(index: number) {
@@ -1449,6 +1458,8 @@ export function ApiProxyPanel({
   savedPort,
   loadBalanceMode,
   sequentialFiveHourLimitPercent,
+  apiProxySupportedModels,
+  apiProxyDisabledModels,
   remoteServers,
   remoteStatuses,
   remoteLogs,
@@ -1477,6 +1488,7 @@ export function ApiProxyPanel({
   onPersistPort,
   onUpdateLoadBalanceMode,
   onUpdateSequentialFiveHourLimitPercent,
+  onUpdateApiProxyDisabledModels,
   onUpdateRemoteServers,
   onRefreshRemoteStatus,
   onDeployRemote,
@@ -1506,6 +1518,12 @@ export function ApiProxyPanel({
   const cloudflaredBusy = installingCloudflared || startingCloudflared || stoppingCloudflared;
   const [portDraft, setPortDraft] = useState<string | null>(null);
   const [sequentialLimitDraft, setSequentialLimitDraft] = useState<number | null>(null);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelMenuSaving, setModelMenuSaving] = useState(false);
+  const [modelMenuDraft, setModelMenuDraft] = useState<string[]>(() =>
+    normalizeDisabledProxyModels(apiProxyDisabledModels, apiProxySupportedModels),
+  );
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [publicAccessEnabled, setPublicAccessEnabled] = useState(cloudflaredStatus.running);
   const [tunnelMode, setTunnelMode] = useState<CloudflaredTunnelMode>(
     cloudflaredStatus.tunnelMode ?? "quick",
@@ -1540,6 +1558,81 @@ export function ApiProxyPanel({
     ],
     [proxyCopy.loadBalanceAverage, proxyCopy.loadBalanceSequential],
   );
+  const portInput = portDraft ?? String(status.port ?? savedPort ?? DEFAULT_PROXY_PORT);
+  const effectiveSequentialLimit = sequentialLimitDraft ?? sequentialFiveHourLimitPercent;
+  const effectiveDisabledModels = useMemo(
+    () => normalizeDisabledProxyModels(apiProxyDisabledModels, apiProxySupportedModels),
+    [apiProxyDisabledModels, apiProxySupportedModels],
+  );
+  const effectiveModelMenuDraft = useMemo(
+    () => normalizeDisabledProxyModels(modelMenuDraft, apiProxySupportedModels),
+    [apiProxySupportedModels, modelMenuDraft],
+  );
+  const enabledModelCount = apiProxySupportedModels.length - effectiveDisabledModels.length;
+  const hasModelMenuChanges =
+    effectiveDisabledModels.length !== effectiveModelMenuDraft.length ||
+    effectiveDisabledModels.some((model, index) => model !== effectiveModelMenuDraft[index]);
+  const normalizedModelSearchQuery = modelSearchQuery.trim().toLocaleLowerCase();
+  const filteredProxyModels = useMemo(
+    () =>
+      apiProxySupportedModels.filter((model) =>
+        normalizedModelSearchQuery === ""
+          ? true
+          : model.toLocaleLowerCase().includes(normalizedModelSearchQuery),
+      ),
+    [apiProxySupportedModels, normalizedModelSearchQuery],
+  );
+
+  useEffect(() => {
+    if (modelMenuOpen) {
+      return;
+    }
+    setModelMenuDraft(effectiveDisabledModels);
+  }, [effectiveDisabledModels, modelMenuOpen]);
+
+  useEffect(() => {
+    if (!modelMenuOpen) {
+      setModelSearchQuery("");
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !modelMenuSaving) {
+        setModelMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [modelMenuOpen, modelMenuSaving]);
+
+  const handleToggleProxyModel = useCallback((model: string, enabled: boolean) => {
+    setModelMenuDraft((current) => {
+      const currentDisabled = normalizeDisabledProxyModels(current, apiProxySupportedModels);
+      if (enabled) {
+        return currentDisabled.filter((item) => item !== model);
+      }
+      if (currentDisabled.includes(model)) {
+        return currentDisabled;
+      }
+      return normalizeDisabledProxyModels([...currentDisabled, model], apiProxySupportedModels);
+    });
+  }, [apiProxySupportedModels]);
+
+  const handleSaveProxyModels = useCallback(async () => {
+    if (modelMenuSaving) {
+      return;
+    }
+    setModelMenuSaving(true);
+    try {
+      await onUpdateApiProxyDisabledModels(effectiveModelMenuDraft);
+      setModelMenuOpen(false);
+    } finally {
+      setModelMenuSaving(false);
+    }
+  }, [effectiveModelMenuDraft, modelMenuSaving, onUpdateApiProxyDisabledModels]);
 
   const effectiveRemoteDrafts =
     remoteDrafts.length === 0 && remoteServers.length > 0
@@ -1570,8 +1663,6 @@ export function ApiProxyPanel({
     writeStorageValue(REMOTE_HISTORY_CACHE_KEY, JSON.stringify(remoteHistory), "local");
   }, [remoteHistory]);
 
-  const portInput = portDraft ?? String(status.port ?? savedPort ?? DEFAULT_PROXY_PORT);
-  const effectiveSequentialLimit = sequentialLimitDraft ?? sequentialFiveHourLimitPercent;
   const rawPort = portInput.trim();
   const effectivePort = !rawPort
     ? 8787
@@ -1943,6 +2034,41 @@ export function ApiProxyPanel({
             </div>
           </div>
 
+          <article className="proxyDetailCard proxyEndpointCard">
+            <span className="proxyLabel">{proxyCopy.baseUrlLabel}</span>
+            <div className="proxyEndpointList">
+              <div className="proxyEndpointRow">
+                <div className="proxyEndpointMeta">
+                  <span>{proxyCopy.localBaseUrlLabel}</span>
+                  <code>{status.baseUrl ?? proxyCopy.baseUrlPlaceholder}</code>
+                </div>
+                <button
+                  className="ghost proxyCopyButton"
+                  onClick={() => copyText(status.baseUrl)}
+                  disabled={!status.baseUrl}
+                >
+                  {proxyCopy.copy}
+                </button>
+              </div>
+
+              {status.lanBaseUrl ? (
+                <div className="proxyEndpointRow">
+                  <div className="proxyEndpointMeta">
+                    <span>{proxyCopy.lanBaseUrlLabel}</span>
+                    <code>{status.lanBaseUrl}</code>
+                  </div>
+                  <button
+                    className="ghost proxyCopyButton"
+                    onClick={() => copyText(status.lanBaseUrl)}
+                    disabled={!status.lanBaseUrl}
+                  >
+                    {proxyCopy.copy}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </article>
+
           <article className="proxyDetailCard proxyBalanceCard">
             <div className="proxyBalanceHeader">
               <span className="proxyLabel">{proxyCopy.loadBalanceLabel}</span>
@@ -1988,44 +2114,28 @@ export function ApiProxyPanel({
                 <p>{proxyCopy.sequentialFiveHourLimitDescription}</p>
               </div>
             ) : null}
+
+          </article>
+
+          <article className="proxyDetailCard proxyModelCard">
+            <div className="proxyModelCardHeader">
+              <div className="proxyModelCardCopy">
+                <span className="proxyLabel">{proxyCopy.modelMenuLabel}</span>
+                <strong>{enabledModelCount}/{apiProxySupportedModels.length || 0}</strong>
+                <p>{proxyCopy.modelMenuDescription}</p>
+              </div>
+              <button
+                type="button"
+                className="ghost proxySubmenuTrigger"
+                disabled={savingSettings || apiProxySupportedModels.length === 0}
+                onClick={() => setModelMenuOpen(true)}
+              >
+                <span>{proxyCopy.modelMenuOpen}</span>
+              </button>
+            </div>
           </article>
 
           <div className="proxyDetailGrid">
-            <article className="proxyDetailCard proxyEndpointCard">
-              <span className="proxyLabel">{proxyCopy.baseUrlLabel}</span>
-              <div className="proxyEndpointList">
-                <div className="proxyEndpointRow">
-                  <div className="proxyEndpointMeta">
-                    <span>{proxyCopy.localBaseUrlLabel}</span>
-                    <code>{status.baseUrl ?? proxyCopy.baseUrlPlaceholder}</code>
-                  </div>
-                  <button
-                    className="ghost proxyCopyButton"
-                    onClick={() => copyText(status.baseUrl)}
-                    disabled={!status.baseUrl}
-                  >
-                    {proxyCopy.copy}
-                  </button>
-                </div>
-
-                {status.lanBaseUrl ? (
-                  <div className="proxyEndpointRow">
-                    <div className="proxyEndpointMeta">
-                      <span>{proxyCopy.lanBaseUrlLabel}</span>
-                      <code>{status.lanBaseUrl}</code>
-                    </div>
-                    <button
-                      className="ghost proxyCopyButton"
-                      onClick={() => copyText(status.lanBaseUrl)}
-                      disabled={!status.lanBaseUrl}
-                    >
-                      {proxyCopy.copy}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </article>
-
             <article className="proxyDetailCard">
               <div className="proxyDetailHeader">
                 <span className="proxyLabel">{proxyCopy.apiKeyLabel}</span>
@@ -2060,6 +2170,122 @@ export function ApiProxyPanel({
               <p className="proxyErrorText">{status.lastError ?? proxyCopy.none}</p>
             </article>
           </div>
+
+          {modelMenuOpen
+            ? createPortal(
+                <div
+                  className="settingsOverlay"
+                  onClick={() => {
+                    if (!modelMenuSaving) {
+                      setModelMenuOpen(false);
+                    }
+                  }}
+                >
+                  <section
+                    className="settingsDialog proxyModelDialog"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={proxyCopy.modelMenuTitle}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="settingsHeader">
+                      <div>
+                        <h2>{proxyCopy.modelMenuTitle}</h2>
+                        <p className="proxyModelDialogSubtitle">{proxyCopy.modelMenuDialogDescription}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="iconButton ghost"
+                        onClick={() => setModelMenuOpen(false)}
+                        title={copy.common.close}
+                        disabled={modelMenuSaving}
+                        aria-label={copy.common.close}
+                      >
+                        <svg className="iconGlyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                          <path d="m6 6 12 12" />
+                          <path d="M18 6 6 18" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    <div className="proxyModelDialogToolbar">
+                      <label className="proxyModelSearchField">
+                        <span className="visuallyHidden">{proxyCopy.modelMenuSearchLabel}</span>
+                        <input
+                          className="proxyModelSearchInput"
+                          type="search"
+                          value={modelSearchQuery}
+                          onChange={(event) => setModelSearchQuery(event.currentTarget.value)}
+                          placeholder={proxyCopy.modelMenuSearchPlaceholder}
+                          spellCheck={false}
+                          autoFocus
+                        />
+                      </label>
+
+                      <div className="proxyModelDialogToolbarActions">
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => setModelMenuDraft([])}
+                          disabled={modelMenuSaving || apiProxySupportedModels.length === 0}
+                        >
+                          {proxyCopy.modelMenuEnableAll}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => setModelMenuDraft(apiProxySupportedModels)}
+                          disabled={modelMenuSaving || apiProxySupportedModels.length === 0}
+                        >
+                          {proxyCopy.modelMenuDisableAll}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => setModelMenuOpen(false)}
+                          disabled={modelMenuSaving}
+                        >
+                          {proxyCopy.modelMenuCancel}
+                        </button>
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() => void handleSaveProxyModels()}
+                          disabled={modelMenuSaving || !hasModelMenuChanges}
+                        >
+                          {proxyCopy.modelMenuSave}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="proxyModelDialogList">
+                      {filteredProxyModels.length === 0 ? (
+                        <div className="proxyModelEmptyState">{proxyCopy.modelMenuSearchEmpty}</div>
+                      ) : filteredProxyModels.map((model) => {
+                        const enabled = !effectiveModelMenuDraft.includes(model);
+                        return (
+                          <label key={model} className="proxyModelToggleRow">
+                            <strong className="proxyModelToggleName">{model}</strong>
+                            <span className="themeSwitch proxyModelToggleControl">
+                              <input
+                                type="checkbox"
+                                checked={enabled}
+                                disabled={modelMenuSaving}
+                                onChange={(event) => handleToggleProxyModel(model, event.target.checked)}
+                              />
+                              <span className="themeSwitchTrack" aria-hidden="true">
+                                <span className="themeSwitchThumb" />
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>,
+                document.body,
+              )
+            : null}
         </section>
 
         <section className="proxySectionCard">

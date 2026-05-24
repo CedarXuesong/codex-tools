@@ -1293,6 +1293,11 @@ async fn clear_api_proxy_usage_stats(
 }
 
 #[tauri::command]
+fn get_api_proxy_supported_models() -> Result<Vec<String>, String> {
+    Ok(proxy_service::get_api_proxy_supported_models_internal())
+}
+
+#[tauri::command]
 async fn get_cloudflared_status(state: State<'_, AppState>) -> Result<CloudflaredStatus, String> {
     cloudflared_service::get_cloudflared_status_internal(state.inner()).await
 }
@@ -1527,6 +1532,7 @@ pub fn run() {
             refresh_api_proxy_key,
             get_api_proxy_usage_stats,
             clear_api_proxy_usage_stats,
+            get_api_proxy_supported_models,
             get_cloudflared_status,
             install_cloudflared,
             start_cloudflared_tunnel,

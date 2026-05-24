@@ -278,6 +278,7 @@ export type AppSettings = {
   apiProxyPort: number;
   apiProxyLoadBalanceMode: ApiProxyLoadBalanceMode;
   apiProxySequentialFiveHourLimitPercent: number;
+  apiProxyDisabledModels: string[];
   remoteServers: RemoteServerConfig[];
   locale: AppLocale;
   skippedUpdateVersion: string | null;

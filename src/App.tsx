@@ -46,6 +46,7 @@ function App() {
         installedEditorApps,
         hasOpencodeDesktopApp,
         savingSettings,
+        apiProxySupportedModels,
         apiProxyStatus,
         apiProxyUsageStats,
         apiProxyUsageRange,
@@ -229,6 +230,8 @@ function App() {
                             savedPort={settings.apiProxyPort}
                             loadBalanceMode={settings.apiProxyLoadBalanceMode}
                             sequentialFiveHourLimitPercent={settings.apiProxySequentialFiveHourLimitPercent}
+                            apiProxySupportedModels={apiProxySupportedModels}
+                            apiProxyDisabledModels={settings.apiProxyDisabledModels}
                             remoteServers={settings.remoteServers}
                             remoteStatuses={remoteProxyStatuses}
                             remoteLogs={remoteProxyLogs}
@@ -271,6 +274,11 @@ function App() {
                             onUpdateSequentialFiveHourLimitPercent={(percent) =>
                                 updateSettings(
                                     { apiProxySequentialFiveHourLimitPercent: percent },
+                                    { silent: true, keepInteractive: true },
+                                )}
+                            onUpdateApiProxyDisabledModels={(models) =>
+                                updateSettings(
+                                    { apiProxyDisabledModels: models },
                                     { silent: true, keepInteractive: true },
                                 )}
                             onUpdateRemoteServers={(servers) => void onUpdateRemoteServers(servers)}
